@@ -3376,6 +3376,72 @@ class TestHDFStore(tm.TestCase):
             #result = concat(results)
             #tm.assert_frame_equal(expected, result)
 
+    def test_select_iterator_8014(self):
+
+        # single table
+        with ensure_clean_store(self.path) as store:
+
+            chunksize=1e4
+            expected = tm.makeTimeDataFrame(100064, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df',expected)
+
+            beg_dt = expected.index[0]
+            end_dt = expected.index[-1]
+
+            #
+            # w/o iterator
+            #
+
+            # select w/o iteration and no where clause works
+            result = store.select('df')
+            tm.assert_frame_equal(expected, result)
+
+            # select w/o iterator and where clause, single term, begin
+            # of range, works
+            where = "index >= '%s'" % beg_dt
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/o iterator and where clause, single term, end
+            # of range, works
+            where = "index <= '%s'" % end_dt
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/o iterator and where clause, inclusive range,
+            # works
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(expected, result)
+
+            #
+            # with iterator
+            #
+
+            # select w/iterator and no where clause works
+            results = [ s for s in store.select('df',chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause, single term, begin of range
+            where = "index >= '%s'" % beg_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause, single term, end of range
+            where = "index <= '%s'" % end_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause, inclusive range
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
     def test_retain_index_attributes(self):
 
         # GH 3499, losing frequency info on index recreation
