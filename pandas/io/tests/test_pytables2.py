@@ -145,84 +145,10 @@ class TestHDFStore(tm.TestCase):
     def tearDown(self):
         pass
 
-    def xtest_select_iterator_8014_0(self):
+    def test_select_iterator_8014(self):
 
         # single table
-        with ensure_clean_store(self.path) as store:
-
-            df = tm.makeTimeDataFrame(10064, 'S')
-            _maybe_remove(store, 'df')
-            i = 0; ln = 5927
-            store.append('df', df[i:i+ln])
-            i = i+ln; ln = 4137
-            store.append('df', df[i:i+ln])
-            expected = df
-
-            beg_dt = expected.index[0]
-            end_dt = expected.index[-1]
-
-            # select w/o iteration and no where clause works
-            result = store.select('df')
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and no where clause works
-            results = []
-            for s in store.select('df',iterator=True):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, begin
-            # of range, works
-            where = "index >= '%s'" % beg_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, end
-            # of range, fails
-            where = "index <= '%s'" % end_dt
-            result = store.select('df',where=where)
-            #tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, inclusive range,
-            # fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            result = store.select('df',where=where)
-            #tm.assert_frame_equal(expected, result)
-
-            #
-            # with iterator
-            #
-
-            # select w/iterator and where clause, single term, begin
-            # of range, fails
-            where = "index >= '%s'" % beg_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e2):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, single term, end of
-            # range, fails
-            where = "index <= '%s'" % end_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e2):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, inclusive range, fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e2):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-    def test_select_iterator_8014_1(self):
-
-        # single table
+        chunksize=1e4
         with ensure_clean_store(self.path) as store:
 
             df = tm.makeTimeDataFrame(100064, 'S')
@@ -268,7 +194,7 @@ class TestHDFStore(tm.TestCase):
 
             # select w/iterator and no where clause works
             results = []
-            for s in store.select('df',iterator=True):
+            for s in store.select('df',iterator=True, chunksize=chunksize):
                 results.append(s)
             result = concat(results)
             tm.assert_frame_equal(expected, result)
@@ -277,7 +203,7 @@ class TestHDFStore(tm.TestCase):
             # of range, fails
             where = "index >= '%s'" % beg_dt
             results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
+            for s in store.select('df',where=where,iterator=True, chunksize=chunksize):
                 results.append(s)
             result = concat(results)
             tm.assert_frame_equal(expected, result)
@@ -286,7 +212,7 @@ class TestHDFStore(tm.TestCase):
             # range, fails
             where = "index <= '%s'" % end_dt
             results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
+            for s in store.select('df',where=where,iterator=True, chunksize=chunksize):
                 results.append(s)
             result = concat(results)
             tm.assert_frame_equal(expected, result)
@@ -294,164 +220,10 @@ class TestHDFStore(tm.TestCase):
             # select w/iterator and where clause, inclusive range, fails
             where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
             results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
+            for s in store.select('df',where=where,iterator=True, chunksize=chunksize):
                 results.append(s)
             result = concat(results)
             tm.assert_frame_equal(expected, result)
-
-    def xtest_select_iterator_8014_2(self):
-
-        # single table
-        with ensure_clean_store(self.path) as store:
-
-            df = tm.makeTimeDataFrame(200064, 'S')
-            _maybe_remove(store, 'df')
-            i = 0; ln = 100000
-            store.append('df', df[i:i+ln])
-            i = i+ln; ln = 58689
-            store.append('df', df[i:i+ln])
-            i = i+ln; ln = 41375
-            store.append('df', df[i:i+ln])
-            expected = df
-
-            beg_dt = expected.index[0]
-            end_dt = expected.index[-1]
-
-            # select w/o iteration and no where clause works
-            result = store.select('df')
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and no where clause works
-            results = []
-            for s in store.select('df',iterator=True):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, begin
-            # of range, works
-            where = "index >= '%s'" % beg_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, end
-            # of range, works
-            where = "index <= '%s'" % end_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, inclusive range,
-            # fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            #
-            # with iterator
-            #
-
-            # select w/iterator and where clause, single term, begin
-            # of range, works
-            where = "index >= '%s'" % beg_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, single term, end of
-            # range, fails
-            where = "index <= '%s'" % end_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, inclusive range, fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            results = []
-            for s in store.select('df',where=where,iterator=True, chunksize=1e4):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-    def xtest_select_iterator_8014_3(self):
-
-        # single table
-        with ensure_clean_store(self.path) as store:
-
-            df = tm.makeTimeDataFrame(300064, 'S')
-            _maybe_remove(store, 'df')
-            i = 0; ln = 200000
-            store.append('df', df[i:i+ln])
-            i = i+ln; ln = 58689
-            store.append('df', df[i:i+ln])
-            i = i+ln; ln = 41375
-            store.append('df', df[i:i+ln])
-            expected = df
-
-            beg_dt = expected.index[0]
-            end_dt = expected.index[-1]
-
-            # select w/o iteration and no where clause works
-            result = store.select('df')
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and no where clause works
-            results = []
-            for s in store.select('df',iterator=True):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, begin
-            # of range, works
-            where = "index >= '%s'" % beg_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, single term, end
-            # of range, works
-            where = "index <= '%s'" % end_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/o iterator and where clause, inclusive range,
-            # works
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(expected, result)
-
-            #
-            # with iterator
-            #
-
-            # select w/iterator and where clause, single term, begin
-            # of range, fails
-            where = "index >= '%s'" % beg_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, single term, end of
-            # range, fails
-            where = "index <= '%s'" % end_dt
-            results = []
-            for s in store.select('df',where=where,iterator=True):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause, inclusive range, fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            results = []
-            for s in store.select('df',where=where,iterator=True):
-                results.append(s)
-            result = concat(results)
-            #tm.assert_frame_equal(expected, result)
 
 
 def _test_sort(obj):
