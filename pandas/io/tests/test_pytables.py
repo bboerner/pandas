@@ -3253,6 +3253,47 @@ class TestHDFStore(tm.TestCase):
             tm.assert_frame_equal(expected, result)
             self.assertEqual(len(result), 100)
 
+    def test_select_iterator_8014(self):
+
+        # single table
+        with ensure_clean_store(self.path) as store:
+
+            frames = []
+            df = tm.makeTimeDataFrame(200000, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df', df)
+            frames.append(df)
+            df = tm.makeTimeDataFrame(58689, 'S')
+            store.append('df', df)
+            frames.append(df)
+            df = tm.makeTimeDataFrame(41375, 'S')
+            frames.append(df)
+            store.append('df', df)
+            expected = concat(frames)
+
+            beg_dt = expected.index[0]
+            end_dt = expected.index[-1]
+            #expected = store.select('df')
+
+            # select w/o iteration works
+            result = store.select('df')
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and no where clause works
+            results = []
+            for s in store.select('df',iterator=True):
+                results.append(s)
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause fails
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            results = []
+            for s in store.select('df',where=where,iterator=True):
+                results.append(s)
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
     def test_select_iterator(self):
 
         # single table
