@@ -3442,6 +3442,61 @@ class TestHDFStore(tm.TestCase):
             result = concat(results)
             tm.assert_frame_equal(expected, result)
 
+            #
+            # retrieve subset
+            #
+
+            l_expected = expected[1:]
+            r_expected = expected[:-1]
+            b_expected = expected[1:-1]
+            beg_dt = expected.index[1]
+            end_dt = expected.index[-2]
+
+            #
+            # w/o iterator
+            #
+
+            # select w/o iterator and where clause, single term, begin
+            # of range, works
+            where = "index >= '%s'" % beg_dt
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(l_expected, result)
+
+            # select w/o iterator and where clause, single term, end
+            # of range, works
+            where = "index <= '%s'" % end_dt
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(r_expected, result)
+
+            # select w/o iterator and where clause, inclusive range,
+            # works
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            result = store.select('df',where=where)
+            tm.assert_frame_equal(b_expected, result)
+
+            #
+            # with iterator
+            #
+
+            # select w/iterator and where clause, single term, begin of range
+            # hang in the list comprehension
+            where = "index >= '%s'" % beg_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause, single term, end of range
+            where = "index <= '%s'" % end_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
+            # select w/iterator and where clause, inclusive range
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            tm.assert_frame_equal(expected, result)
+
     def test_retain_index_attributes(self):
 
         # GH 3499, losing frequency info on index recreation
