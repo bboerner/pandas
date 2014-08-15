@@ -1330,10 +1330,7 @@ class TableIterator(object):
 
             stop = min(current + self.chunksize, self.stop)
             value = self.func(None, None, self.coordinates[current:stop])
-            if value is None:
-                continue
-
-            current = current + self.chunksize
+            current = stop
 
             yield value
 

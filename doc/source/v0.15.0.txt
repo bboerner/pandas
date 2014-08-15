@@ -223,6 +223,15 @@ API changes
      s
      s.loc[['D']]
 
+- ``Index`` now supports ``duplicated`` and ``drop_duplicates``. (:issue:`4060`)
+
+  .. ipython:: python
+
+     idx = Index([1, 2, 3, 4, 1, 2])
+     idx
+     idx.duplicated()
+     idx.drop_duplicates()
+
 .. _whatsnew_0150.dt:
 
 .dt accessor
@@ -516,7 +525,7 @@ Bug Fixes
   times were returned when crossing DST boundaries (:issue:`7835`, :issue:`7901`).
 
 
-
+- Bug in area plot draws legend with incorrect ``alpha`` when ``stacked=True`` (:issue:`8027`)
 
 - ``Period`` and ``PeriodIndex`` addition/subtraction with ``np.timedelta64`` results in incorrect internal representations (:issue:`7740`)
 

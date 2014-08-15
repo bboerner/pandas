@@ -3434,6 +3434,22 @@ class TestHDFStore(tm.TestCase):
             rexpected = expected[(expected.index >= beg_dt) & (expected.index <= end_dt)]
             tm.assert_frame_equal(rexpected, result)
 
+        # with iterator, empty where
+        with ensure_clean_store(self.path) as store:
+
+            expected = tm.makeTimeDataFrame(100064, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df',expected)
+
+            end_dt = expected.index[-1]
+
+            # select w/iterator and where clause, single term, begin of range
+            where = "index > '%s'" % end_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            result = concat(results)
+            rexpected = expected[expected.index > end_dt]
+            tm.assert_frame_equal(rexpected, result)
+
     def test_retain_index_attributes(self):
 
         # GH 3499, losing frequency info on index recreation
