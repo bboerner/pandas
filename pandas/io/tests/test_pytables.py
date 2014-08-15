@@ -3483,19 +3483,19 @@ class TestHDFStore(tm.TestCase):
             where = "index >= '%s'" % beg_dt
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(expected, result)
+            tm.assert_frame_equal(l_expected, result)
 
             # select w/iterator and where clause, single term, end of range
             where = "index <= '%s'" % end_dt
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(expected, result)
+            tm.assert_frame_equal(r_expected, result)
 
             # select w/iterator and where clause, inclusive range
             where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(expected, result)
+            tm.assert_frame_equal(b_expected, result)
 
     def test_retain_index_attributes(self):
 
