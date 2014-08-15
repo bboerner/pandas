@@ -662,22 +662,15 @@ class HDFStore(StringMixin):
         s = self._create_storer(group)
         s.infer_axes()
 
+        # what we are actually going to do for a chunk
         def func(_start, _stop):
-            return s.read(start=_start, stop=_stop,
-                          where=where,
+            return s.read(where=where, start=_start, stop=_stop,
                           columns=columns, **kwargs)
 
         if iterator or chunksize is not None:
             if not s.is_table:
                 raise TypeError(
                     "can only use an iterator or chunksize on a table")
-
-            # read the coordinates & iterate
-            if where is not None:
-                c = s.read_coordinates(where=where, **kwargs)
-                def func(_start, _stop):
-                    return s.read(where=c[_start:_stop], columns=columns, **kwargs)
-
             return TableIterator(self, func, nrows=s.nrows, start=start,
                                  stop=stop, chunksize=chunksize,
                                  auto_close=auto_close)
@@ -786,26 +779,18 @@ class HDFStore(StringMixin):
         # axis is the concentation axes
         axis = list(set([t.non_index_axes[0][0] for t in tbls]))[0]
 
-        # for a not-none where, select the coordinates and chunk on those
-        if where is not None:
-            c = s.read_coordinates(where=where, **kwargs)
+        def func(_start, _stop):
+            if where is not None:
+                c = s.read_coordinates(where=where, start=_start, stop=_stop, **kwargs)
+            else:
+                c = None
 
-            def func(_start, _stop):
-                objs = [t.read(where=c[_start:_stop], columns=columns, **kwargs) for t in tbls]
+            objs = [t.read(where=c, start=_start, stop=_stop,
+                           columns=columns, **kwargs) for t in tbls]
 
-                # concat and return
-                return concat(objs, axis=axis,
-                              verify_integrity=False).consolidate()
-
-        else:
-
-            def func(_start, _stop):
-                objs = [t.read(start=_start, stop=_stop,
-                               columns=columns, **kwargs) for t in tbls]
-
-                # concat and return
-                return concat(objs, axis=axis,
-                              verify_integrity=False).consolidate()
+            # concat and return
+            return concat(objs, axis=axis,
+                          verify_integrity=False).consolidate()
 
         if iterator or chunksize is not None:
             return TableIterator(self, func, nrows=nrows, start=start,
@@ -1332,20 +1317,20 @@ class TableIterator(object):
         if chunksize is None:
             chunksize = 100000
 
-        self.chunksize = int(chunksize)
+        self.chunksize = chunksize
         self.auto_close = auto_close
 
     def __iter__(self):
         current = self.start
         while current < self.stop:
+            stop = current + self.chunksize
+            v = self.func(current, stop)
+            current = stop
 
-            stop = min(current + self.chunksize, self.stop)
-            value = self.func(current, stop)
-            if value is None:
+            if v is None:
                 continue
-            current = current + min(self.chunksize,len(value))
 
-            yield value
+            yield v
 
         self.close()
 
