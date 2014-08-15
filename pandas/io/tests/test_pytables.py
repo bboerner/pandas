@@ -3450,6 +3450,61 @@ class TestHDFStore(tm.TestCase):
             rexpected = expected[expected.index > end_dt]
             tm.assert_frame_equal(rexpected, result)
 
+    def test_select_iterator_many_empty_frames(self):
+
+        # GH 8014
+        # using iterator and where clause can return many empty
+        # frames.
+        chunksize=1e4
+
+        # with iterator, range limited to the first chunk
+        with ensure_clean_store(self.path) as store:
+
+            expected = tm.makeTimeDataFrame(100000, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df',expected)
+
+            beg_dt = expected.index[0]
+            end_dt = expected.index[chunksize-1]
+
+            # select w/iterator and where clause, single term, begin of range
+            where = "index >= '%s'" % beg_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            # should be 1, is 10
+            tm.assert_equal(1, len(results))
+            result = concat(results)
+            rexpected = expected[expected.index >= beg_dt]
+            tm.assert_frame_equal(rexpected, result)
+
+            # select w/iterator and where clause, single term, end of range
+            where = "index <= '%s'" % end_dt
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            # should be 1, is 10
+            tm.assert_equal(1, len(results))
+            result = concat(results)
+            rexpected = expected[expected.index <= end_dt]
+            tm.assert_frame_equal(rexpected, result)
+
+            # select w/iterator and where clause, inclusive range
+            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            # should be 1, is 10
+            tm.assert_equal(1, len(results))
+            result = concat(results)
+            rexpected = expected[(expected.index >= beg_dt) & (expected.index <= end_dt)]
+            tm.assert_frame_equal(rexpected, result)
+
+            # select w/iterator and where clause which selects
+            # *nothing*.
+            #
+            # To be consistent with Python idiom I suggest this should
+            # return [] e.g. `for e in []: print True` never prints
+            # True.
+            where = "index <= '%s' & index >= '%s'" % (beg_dt, end_dt)
+            results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
+            # should be []
+            tm.assert_equal(0, len(results))
+
     def test_retain_index_attributes(self):
 
         # GH 3499, losing frequency info on index recreation
