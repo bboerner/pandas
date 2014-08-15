@@ -3253,47 +3253,6 @@ class TestHDFStore(tm.TestCase):
             tm.assert_frame_equal(expected, result)
             self.assertEqual(len(result), 100)
 
-    def test_select_iterator_8014(self):
-
-        # single table
-        with ensure_clean_store(self.path) as store:
-
-            frames = []
-            df = tm.makeTimeDataFrame(200000, 'S')
-            _maybe_remove(store, 'df')
-            store.append('df', df)
-            frames.append(df)
-            df = tm.makeTimeDataFrame(58689, 'S')
-            store.append('df', df)
-            frames.append(df)
-            df = tm.makeTimeDataFrame(41375, 'S')
-            frames.append(df)
-            store.append('df', df)
-            expected = concat(frames)
-
-            beg_dt = expected.index[0]
-            end_dt = expected.index[-1]
-            #expected = store.select('df')
-
-            # select w/o iteration works
-            result = store.select('df')
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and no where clause works
-            results = []
-            for s in store.select('df',iterator=True):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
-            # select w/iterator and where clause fails
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            results = []
-            for s in store.select('df',where=where,iterator=True):
-                results.append(s)
-            result = concat(results)
-            tm.assert_frame_equal(expected, result)
-
     def test_select_iterator(self):
 
         # single table
@@ -3305,21 +3264,16 @@ class TestHDFStore(tm.TestCase):
 
             expected = store.select('df')
 
-            results = []
-            for s in store.select('df',iterator=True):
-                results.append(s)
+            results = [ s for s in store.select('df',iterator=True) ]
             result = concat(results)
             tm.assert_frame_equal(expected, result)
-            results = []
-            for s in store.select('df',chunksize=100):
-                results.append(s)
+
+            results = [ s for s in store.select('df',chunksize=100) ]
             self.assertEqual(len(results), 5)
             result = concat(results)
             tm.assert_frame_equal(expected, result)
 
-            results = []
-            for s in store.select('df',chunksize=150):
-                results.append(s)
+            results = [ s for s in store.select('df',chunksize=150) ]
             result = concat(results)
             tm.assert_frame_equal(result, expected)
 
@@ -3335,12 +3289,10 @@ class TestHDFStore(tm.TestCase):
             df = tm.makeTimeDataFrame(500)
             df.to_hdf(path,'df',format='table')
 
-            results = []
-            for x in read_hdf(path,'df',chunksize=100):
-                results.append(x)
+            results = [ s for s in read_hdf(path,'df',chunksize=100) ]
+            result = concat(results)
 
             self.assertEqual(len(results), 5)
-            result = concat(results)
             tm.assert_frame_equal(result, df)
             tm.assert_frame_equal(result, read_hdf(path,'df'))
 
@@ -3359,10 +3311,8 @@ class TestHDFStore(tm.TestCase):
             # full selection
             expected = store.select_as_multiple(
                 ['df1', 'df2'], selector='df1')
-            results = []
-            for s in store.select_as_multiple(
-                ['df1', 'df2'], selector='df1', chunksize=150):
-                results.append(s)
+            results = [ s for s in store.select_as_multiple(
+                ['df1', 'df2'], selector='df1', chunksize=150) ]
             result = concat(results)
             tm.assert_frame_equal(expected, result)
 
@@ -3376,22 +3326,21 @@ class TestHDFStore(tm.TestCase):
             #result = concat(results)
             #tm.assert_frame_equal(expected, result)
 
-    def test_select_iterator_8014(self):
+    def test_select_iterator_complete_8014(self):
 
-        # single table
+        # GH 8014
+        # using iterator and where clause
+        chunksize=1e4
+
+        # no iterator
         with ensure_clean_store(self.path) as store:
 
-            chunksize=1e4
             expected = tm.makeTimeDataFrame(100064, 'S')
             _maybe_remove(store, 'df')
             store.append('df',expected)
 
             beg_dt = expected.index[0]
             end_dt = expected.index[-1]
-
-            #
-            # w/o iterator
-            #
 
             # select w/o iteration and no where clause works
             result = store.select('df')
@@ -3415,9 +3364,15 @@ class TestHDFStore(tm.TestCase):
             result = store.select('df',where=where)
             tm.assert_frame_equal(expected, result)
 
-            #
-            # with iterator
-            #
+        # with iterator, full range
+        with ensure_clean_store(self.path) as store:
+
+            expected = tm.makeTimeDataFrame(100064, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df',expected)
+
+            beg_dt = expected.index[0]
+            end_dt = expected.index[-1]
 
             # select w/iterator and no where clause works
             results = [ s for s in store.select('df',chunksize=chunksize) ]
@@ -3442,60 +3397,42 @@ class TestHDFStore(tm.TestCase):
             result = concat(results)
             tm.assert_frame_equal(expected, result)
 
-            #
-            # retrieve subset
-            #
+    def test_select_iterator_non_complete_8014(self):
 
-            l_expected = expected[1:]
-            r_expected = expected[:-1]
-            b_expected = expected[1:-1]
+        # GH 8014
+        # using iterator and where clause
+        chunksize=1e4
+
+        # with iterator, non complete range
+        with ensure_clean_store(self.path) as store:
+
+            expected = tm.makeTimeDataFrame(100064, 'S')
+            _maybe_remove(store, 'df')
+            store.append('df',expected)
+
             beg_dt = expected.index[1]
             end_dt = expected.index[-2]
 
-            #
-            # w/o iterator
-            #
-
-            # select w/o iterator and where clause, single term, begin
-            # of range, works
-            where = "index >= '%s'" % beg_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(l_expected, result)
-
-            # select w/o iterator and where clause, single term, end
-            # of range, works
-            where = "index <= '%s'" % end_dt
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(r_expected, result)
-
-            # select w/o iterator and where clause, inclusive range,
-            # works
-            where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
-            result = store.select('df',where=where)
-            tm.assert_frame_equal(b_expected, result)
-
-            #
-            # with iterator
-            #
-
             # select w/iterator and where clause, single term, begin of range
-            # hang in the list comprehension
             where = "index >= '%s'" % beg_dt
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(l_expected, result)
+            rexpected = expected[expected.index >= beg_dt]
+            tm.assert_frame_equal(rexpected, result)
 
             # select w/iterator and where clause, single term, end of range
             where = "index <= '%s'" % end_dt
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(r_expected, result)
+            rexpected = expected[expected.index <= end_dt]
+            tm.assert_frame_equal(rexpected, result)
 
             # select w/iterator and where clause, inclusive range
             where = "index >= '%s' & index <= '%s'" % (beg_dt, end_dt)
             results = [ s for s in store.select('df',where=where,chunksize=chunksize) ]
             result = concat(results)
-            tm.assert_frame_equal(b_expected, result)
+            rexpected = expected[(expected.index >= beg_dt) & (expected.index <= end_dt)]
+            tm.assert_frame_equal(rexpected, result)
 
     def test_retain_index_attributes(self):
 
