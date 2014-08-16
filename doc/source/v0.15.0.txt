@@ -223,6 +223,15 @@ API changes
      s
      s.loc[['D']]
 
+- ``Index`` now supports ``duplicated`` and ``drop_duplicates``. (:issue:`4060`)
+
+  .. ipython:: python
+
+     idx = Index([1, 2, 3, 4, 1, 2])
+     idx
+     idx.duplicated()
+     idx.drop_duplicates()
+
 .. _whatsnew_0150.dt:
 
 .dt accessor
@@ -437,6 +446,7 @@ There are no experimental changes in 0.15.0
 
 Bug Fixes
 ~~~~~~~~~
+- Bug in multiindexes dtypes getting mixed up when DataFrame is saved to SQL table (:issue:`8021`)
 - Bug in Series 0-division with a float and integer operand dtypes  (:issue:`7785`)
 - Bug in ``Series.astype("unicode")`` not calling ``unicode`` on the values correctly (:issue:`7758`)
 - Bug in ``DataFrame.as_matrix()`` with mixed ``datetime64[ns]`` and ``timedelta64[ns]`` dtypes (:issue:`7778`)
@@ -454,7 +464,7 @@ Bug Fixes
 - Bug in pickle deserialization that failed for pre-0.14.1 containers with dup items trying to avoid ambiguity
   when matching block and manager items, when there's only one block there's no ambiguity (:issue:`7794`)
 
-
+- Bug in HDFStore iteration when passing a where (:issue:`8014`)
 
 - Bug in repeated timeseries line and area plot may result in ``ValueError`` or incorrect kind (:issue:`7733`)
 
@@ -516,7 +526,7 @@ Bug Fixes
   times were returned when crossing DST boundaries (:issue:`7835`, :issue:`7901`).
 
 
-
+- Bug in area plot draws legend with incorrect ``alpha`` when ``stacked=True`` (:issue:`8027`)
 
 - ``Period`` and ``PeriodIndex`` addition/subtraction with ``np.timedelta64`` results in incorrect internal representations (:issue:`7740`)
 
