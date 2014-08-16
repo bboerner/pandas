@@ -154,7 +154,7 @@ Bug Fixes
 
 
 
-
+- Bug in HDFStore iteration when passing a where (:issue:`8014`)
 
 
 
