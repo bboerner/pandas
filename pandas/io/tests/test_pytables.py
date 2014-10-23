@@ -198,8 +198,8 @@ class TestHDFStore(tm.TestCase):
         # GH6166
         # unconversion of long strings was being chopped in earlier
         # versions of numpy < 1.7.2
-        df = DataFrame({'a': [tm.rands(100) for _ in range(10)]},
-                       index=[tm.rands(100) for _ in range(10)])
+        df = DataFrame({'a': tm.rands_array(100, size=10)},
+                       index=tm.rands_array(100, size=10))
 
         with ensure_clean_store(self.path) as store:
             store.append('df', df, data_columns=['a'])
@@ -287,6 +287,10 @@ class TestHDFStore(tm.TestCase):
 
             self.assertRaises(TypeError, df.to_hdf, path,'df',append=True,format='foo')
             self.assertRaises(TypeError, df.to_hdf, path,'df',append=False,format='bar')
+
+        #File path doesn't exist
+        path = ""
+        self.assertRaises(IOError, read_hdf, path, 'df') 
 
     def test_api_default_format(self):
 
@@ -2320,7 +2324,7 @@ class TestHDFStore(tm.TestCase):
             n = store.remove('wp5', start=16, stop=-16)
             self.assertTrue(n == 120-32)
             result = store.select('wp5')
-            expected = wp.reindex(major_axis=wp.major_axis[:16//4]+wp.major_axis[-16//4:])
+            expected = wp.reindex(major_axis=wp.major_axis[:16//4].union(wp.major_axis[-16//4:]))
             assert_panel_equal(result, expected)
 
             _maybe_remove(store, 'wp6')
@@ -2339,7 +2343,7 @@ class TestHDFStore(tm.TestCase):
             n = store.remove('wp7', where=[crit], stop=80)
             self.assertTrue(n == 28)
             result = store.select('wp7')
-            expected = wp.reindex(major_axis=wp.major_axis-wp.major_axis[np.arange(0,20,3)])
+            expected = wp.reindex(major_axis=wp.major_axis.difference(wp.major_axis[np.arange(0,20,3)]))
             assert_panel_equal(result, expected)
 
     def test_remove_crit(self):
@@ -2357,7 +2361,7 @@ class TestHDFStore(tm.TestCase):
             self.assertTrue(n == 36)
 
             result = store.select('wp3')
-            expected = wp.reindex(major_axis=wp.major_axis - date4)
+            expected = wp.reindex(major_axis=wp.major_axis.difference(date4))
             assert_panel_equal(result, expected)
 
             # upper half
@@ -2385,7 +2389,7 @@ class TestHDFStore(tm.TestCase):
             crit1 = Term('major_axis=date1')
             store.remove('wp2', where=[crit1])
             result = store.select('wp2')
-            expected = wp.reindex(major_axis=wp.major_axis - date1)
+            expected = wp.reindex(major_axis=wp.major_axis.difference(date1))
             assert_panel_equal(result, expected)
 
             date2 = wp.major_axis[5]
@@ -2393,7 +2397,7 @@ class TestHDFStore(tm.TestCase):
             store.remove('wp2', where=[crit2])
             result = store['wp2']
             expected = wp.reindex(
-                major_axis=wp.major_axis - date1 - Index([date2]))
+                major_axis=wp.major_axis.difference(date1).difference(Index([date2])))
             assert_panel_equal(result, expected)
 
             date3 = [wp.major_axis[7], wp.major_axis[9]]
@@ -2401,7 +2405,7 @@ class TestHDFStore(tm.TestCase):
             store.remove('wp2', where=[crit3])
             result = store['wp2']
             expected = wp.reindex(
-                major_axis=wp.major_axis - date1 - Index([date2]) - Index(date3))
+                major_axis=wp.major_axis.difference(date1).difference(Index([date2])).difference(Index(date3)))
             assert_panel_equal(result, expected)
 
             # corners
@@ -4541,7 +4545,7 @@ class TestHDFStore(tm.TestCase):
 
         with ensure_clean_store(self.path) as store:
 
-            s = Series(Categorical(['a', 'b', 'b', 'a', 'a', 'c'], levels=['a','b','c','d']))
+            s = Series(Categorical(['a', 'b', 'b', 'a', 'a', 'c'], categories=['a','b','c','d']))
 
             self.assertRaises(NotImplementedError, store.put, 's_fixed', s, format='fixed')
             self.assertRaises(NotImplementedError, store.append, 's_table', s, format='table')

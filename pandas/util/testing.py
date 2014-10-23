@@ -21,6 +21,7 @@ from distutils.version import LooseVersion
 
 from numpy.random import randn, rand
 import numpy as np
+from numpy.testing import assert_array_equal
 
 import pandas as pd
 from pandas.core.common import _is_sequence, array_equivalent
@@ -39,6 +40,7 @@ from pandas.computation import expressions as expr
 
 from pandas import bdate_range
 from pandas.tseries.index import DatetimeIndex
+from pandas.tseries.tdi import TimedeltaIndex
 from pandas.tseries.period import PeriodIndex
 
 from pandas import _testing
@@ -105,7 +107,7 @@ class TestCase(unittest.TestCase):
             pd.to_pickle(obj, path)
             return pd.read_pickle(path)
 
-    def assert_numpy_array_equivalent(self, np_array, assert_equal):
+    def assert_numpy_array_equivalent(self, np_array, assert_equal, strict_nan=False):
         """Checks that 'np_array' is equivalent to 'assert_equal'
 
         Two numpy arrays are equivalent if the arrays have equal non-NaN elements, and
@@ -115,9 +117,19 @@ class TestCase(unittest.TestCase):
         similar to `assert_numpy_array_equal()`. If the expected array includes `np.nan` use this
         function.
         """
-        if array_equivalent(np_array, assert_equal):
+        if array_equivalent(np_array, assert_equal, strict_nan=strict_nan):
             return
         raise AssertionError('{0} is not equivalent to {1}.'.format(np_array, assert_equal))
+
+    def assert_categorical_equal(self, res, exp):
+        if not array_equivalent(res.categories, exp.categories):
+            raise AssertionError('categories not equivalent: {0} vs {1}.'.format(res.categories,
+                                                                                 exp.categories))
+        if not array_equivalent(res.codes, exp.codes):
+            raise AssertionError('codes not equivalent: {0} vs {1}.'.format(res.codes,
+                                                                            exp.codes))
+        self.assertEqual(res.ordered, exp.ordered, "ordered not the same")
+        self.assertEqual(res.name, exp.name, "name not the same")
 
     def assertIs(self, first, second, msg=''):
         """Checks that 'first' is 'second'"""
@@ -181,15 +193,50 @@ def randbool(size=(), p=0.5):
     return rand(*size) <= p
 
 
-def rands(n):
-    choices = string.ascii_letters + string.digits
-    return ''.join(random.choice(choices) for _ in range(n))
+RANDS_CHARS = np.array(list(string.ascii_letters + string.digits),
+                       dtype=(np.str_, 1))
+RANDU_CHARS = np.array(list(u("").join(map(unichr, lrange(1488, 1488 + 26))) +
+                            string.digits), dtype=(np.unicode_, 1))
 
 
-def randu(n):
-    choices = u("").join(map(unichr, lrange(1488, 1488 + 26)))
-    choices += string.digits
-    return ''.join([random.choice(choices) for _ in range(n)])
+def rands_array(nchars, size, dtype='O'):
+    """Generate an array of byte strings."""
+    retval = (choice(RANDS_CHARS, size=nchars * np.prod(size))
+              .view((np.str_, nchars)).reshape(size))
+    if dtype is None:
+        return retval
+    else:
+        return retval.astype(dtype)
+
+
+def randu_array(nchars, size, dtype='O'):
+    """Generate an array of unicode strings."""
+    retval = (choice(RANDU_CHARS, size=nchars * np.prod(size))
+              .view((np.unicode_, nchars)).reshape(size))
+    if dtype is None:
+        return retval
+    else:
+        return retval.astype(dtype)
+
+
+def rands(nchars):
+    """
+    Generate one random byte string.
+
+    See `rands_array` if you want to create an array of random strings.
+
+    """
+    return ''.join(choice(RANDS_CHARS, nchars))
+
+
+def randu(nchars):
+    """
+    Generate one random unicode string.
+
+    See `randu_array` if you want to create an array of random unicode strings.
+
+    """
+    return ''.join(choice(RANDU_CHARS, nchars))
 
 
 def choice(x, size=10):
@@ -731,27 +778,33 @@ def getArangeMat():
 
 # make index
 def makeStringIndex(k=10):
-    return Index([rands(10) for _ in range(k)])
+    return Index(rands_array(nchars=10, size=k))
 
 
 def makeUnicodeIndex(k=10):
-    return Index([randu(10) for _ in range(k)])
+    return Index(randu_array(nchars=10, size=k))
 
+def makeBoolIndex(k=10):
+    if k == 1:
+        return Index([True])
+    elif k == 2:
+        return Index([False,True])
+    return Index([False,True] + [False]*(k-2))
 
 def makeIntIndex(k=10):
     return Index(lrange(k))
 
-
 def makeFloatIndex(k=10):
     values = sorted(np.random.random_sample(k)) - np.random.random_sample(1)
     return Index(values * (10 ** np.random.randint(0, 9)))
-
 
 def makeDateIndex(k=10, freq='B'):
     dt = datetime(2000, 1, 1)
     dr = bdate_range(dt, periods=k, freq=freq)
     return DatetimeIndex(dr)
 
+def makeTimedeltaIndex(k=10, freq='D'):
+    return TimedeltaIndex(start='1 day',periods=k,freq=freq)
 
 def makePeriodIndex(k=10):
     dt = datetime(2000, 1, 1)
@@ -863,11 +916,12 @@ def makeCustomIndex(nentries, nlevels, prefix='#', names=False, ndupe_l=None,
        label will repeated at the corresponding level, you can specify just
        the first few, the rest will use the default ndupe_l of 1.
        len(ndupe_l) <= nlevels.
-    idx_type - "i"/"f"/"s"/"u"/"dt/"p".
+    idx_type - "i"/"f"/"s"/"u"/"dt"/"p"/"td".
        If idx_type is not None, `idx_nlevels` must be 1.
        "i"/"f" creates an integer/float index,
        "s"/"u" creates a string/unicode index
        "dt" create a datetime index.
+       "td" create a datetime index.
 
         if unspecified, string labels will be generated.
     """
@@ -878,7 +932,7 @@ def makeCustomIndex(nentries, nlevels, prefix='#', names=False, ndupe_l=None,
     assert (names is None or names is False
             or names is True or len(names) is nlevels)
     assert idx_type is None or \
-        (idx_type in ('i', 'f', 's', 'u', 'dt', 'p') and nlevels == 1)
+        (idx_type in ('i', 'f', 's', 'u', 'dt', 'p', 'td') and nlevels == 1)
 
     if names is True:
         # build default names
@@ -893,7 +947,8 @@ def makeCustomIndex(nentries, nlevels, prefix='#', names=False, ndupe_l=None,
 
     # specific 1D index type requested?
     idx_func = dict(i=makeIntIndex, f=makeFloatIndex, s=makeStringIndex,
-                    u=makeUnicodeIndex, dt=makeDateIndex, p=makePeriodIndex).get(idx_type)
+                    u=makeUnicodeIndex, dt=makeDateIndex, td=makeTimedeltaIndex,
+                    p=makePeriodIndex).get(idx_type)
     if idx_func:
         idx = idx_func(nentries)
         # but we need to fill in the name
@@ -902,7 +957,7 @@ def makeCustomIndex(nentries, nlevels, prefix='#', names=False, ndupe_l=None,
         return idx
     elif idx_type is not None:
         raise ValueError('"%s" is not a legal value for `idx_type`, use  '
-                         '"i"/"f"/"s"/"u"/"dt/"p".' % idx_type)
+                         '"i"/"f"/"s"/"u"/"dt/"p"/"td".' % idx_type)
 
     if len(ndupe_l) < nlevels:
         ndupe_l.extend([1] * (nlevels - len(ndupe_l)))
@@ -959,11 +1014,12 @@ def makeCustomDataframe(nrows, ncols, c_idx_names=True, r_idx_names=True,
         doesn't divide nrows/ncol, the last label might have lower multiplicity.
    dtype - passed to the DataFrame constructor as is, in case you wish to
         have more control in conjuncion with a custom `data_gen_f`
-   r_idx_type, c_idx_type -  "i"/"f"/"s"/"u"/"dt".
+   r_idx_type, c_idx_type -  "i"/"f"/"s"/"u"/"dt"/"td".
        If idx_type is not None, `idx_nlevels` must be 1.
        "i"/"f" creates an integer/float index,
        "s"/"u" creates a string/unicode index
        "dt" create a datetime index.
+       "td" create a timedelta index.
 
         if unspecified, string labels will be generated.
 
@@ -996,9 +1052,9 @@ def makeCustomDataframe(nrows, ncols, c_idx_names=True, r_idx_names=True,
     assert c_idx_nlevels > 0
     assert r_idx_nlevels > 0
     assert r_idx_type is None or \
-        (r_idx_type in ('i', 'f', 's', 'u', 'dt', 'p') and r_idx_nlevels == 1)
+        (r_idx_type in ('i', 'f', 's', 'u', 'dt', 'p', 'td') and r_idx_nlevels == 1)
     assert c_idx_type is None or \
-        (c_idx_type in ('i', 'f', 's', 'u', 'dt', 'p') and c_idx_nlevels == 1)
+        (c_idx_type in ('i', 'f', 's', 'u', 'dt', 'p', 'td') and c_idx_nlevels == 1)
 
     columns = makeCustomIndex(ncols, nlevels=c_idx_nlevels, prefix='C',
                               names=c_idx_names, ndupe_l=c_ndupe_l,

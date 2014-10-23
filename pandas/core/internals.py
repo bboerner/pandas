@@ -13,7 +13,7 @@ from pandas.core.common import (_possibly_downcast_to_dtype, isnull,
                                 ABCSparseSeries, _infer_dtype_from_scalar,
                                 _is_null_datelike_scalar,
                                 is_timedelta64_dtype, is_datetime64_dtype,
-                                _possibly_infer_to_datetimelike)
+                                _possibly_infer_to_datetimelike, array_equivalent)
 from pandas.core.index import Index, MultiIndex, _ensure_index
 from pandas.core.indexing import (_maybe_convert_indices, _length_of_indexer)
 from pandas.core.categorical import Categorical, _maybe_to_categorical, _is_categorical
@@ -24,7 +24,7 @@ import pandas.tslib as tslib
 import pandas.computation.expressions as expressions
 from pandas.util.decorators import cache_readonly
 
-from pandas.tslib import Timestamp
+from pandas.tslib import Timestamp, Timedelta
 from pandas import compat
 from pandas.compat import range, map, zip, u
 from pandas.tseries.timedeltas import _coerce_scalar_to_timedelta_type
@@ -245,7 +245,7 @@ class Block(PandasObject):
         """ apply the function to my values; return a block if we are not one """
         result = func(self.values)
         if not isinstance(result, Block):
-            result = make_block(values=result, placement=self.mgr_locs,)
+            result = make_block(values=_block_shape(result), placement=self.mgr_locs,)
 
         return result
 
@@ -357,6 +357,9 @@ class Block(PandasObject):
                 return self.copy()
             return self
 
+        if klass is None:
+            if dtype == np.object_:
+                klass = ObjectBlock
         try:
             # force the copy here
             if values is None:
@@ -494,6 +497,11 @@ class Block(PandasObject):
         compatible shape
         """
 
+        # coerce None values, if appropriate
+        if value is None:
+            if self.is_numeric:
+                value = np.nan
+
         # coerce args
         values, value = self._try_coerce_args(self.values, value)
         arr_value = np.array(value)
@@ -548,9 +556,15 @@ class Block(PandasObject):
             else:
                 dtype = 'infer'
             values = self._try_coerce_and_cast_result(values, dtype)
-            return [make_block(transf(values),
+            block = make_block(transf(values),
                                ndim=self.ndim, placement=self.mgr_locs,
-                               fastpath=True)]
+                               fastpath=True)
+
+            # may have to soft convert_objects here
+            if block.is_object and not self.is_object:
+                block = block.convert(convert_numeric=False)
+
+            return block
         except (ValueError, TypeError) as detail:
             raise
         except Exception as detail:
@@ -587,7 +601,7 @@ class Block(PandasObject):
             mask = mask.values.T
 
         # if we are passed a scalar None, convert it here
-        if not is_list_like(new) and isnull(new):
+        if not is_list_like(new) and isnull(new) and not self.is_object:
             new = self.fill_value
 
         if self._can_hold_element(new):
@@ -817,7 +831,10 @@ class Block(PandasObject):
         if f_ordered:
             new_values = new_values.T
             axis = new_values.ndim - axis - 1
-        new_values = np.roll(new_values, periods, axis=axis)
+
+        if np.prod(new_values.shape):
+            new_values = np.roll(new_values, com._ensure_platform_int(periods), axis=axis)
+
         axis_indexer = [ slice(None) ] * self.ndim
         if periods > 0:
             axis_indexer[axis] = slice(None,periods)
@@ -1040,7 +1057,7 @@ class Block(PandasObject):
 
     def equals(self, other):
         if self.dtype != other.dtype or self.shape != other.shape: return False
-        return np.array_equal(self.values, other.values)
+        return array_equivalent(self.values, other.values)
 
 
 class NonConsolidatableMixIn(object):
@@ -1053,15 +1070,18 @@ class NonConsolidatableMixIn(object):
     def __init__(self, values, placement,
                  ndim=None, fastpath=False,):
 
+        # Placement must be converted to BlockPlacement via property setter
+        # before ndim logic, because placement may be a slice which doesn't
+        # have a length.
+        self.mgr_locs = placement
+
         # kludgetastic
         if ndim is None:
-            if len(placement) != 1:
+            if len(self.mgr_locs) != 1:
                 ndim = 1
             else:
                 ndim = 2
         self.ndim = ndim
-
-        self.mgr_locs = placement
 
         if not isinstance(values, self._holder):
             raise TypeError("values must be {0}".format(self._holder.__name__))
@@ -1224,6 +1244,8 @@ class TimeDeltaBlock(IntBlock):
         """ if we are a NaT, return the actual fill value """
         if isinstance(value, type(tslib.NaT)) or np.array(isnull(value)).all():
             value = tslib.iNaT
+        elif isinstance(value, Timedelta):
+            value = value.value
         elif isinstance(value, np.timedelta64):
             pass
         elif com.is_integer(value):
@@ -1249,8 +1271,8 @@ class TimeDeltaBlock(IntBlock):
 
         if _is_null_datelike_scalar(other):
             other = np.nan
-        elif isinstance(other, np.timedelta64):
-            other = _coerce_scalar_to_timedelta_type(other, unit='s').item()
+        elif isinstance(other, (np.timedelta64, Timedelta, timedelta)):
+            other = _coerce_scalar_to_timedelta_type(other, unit='s', box=False).item()
             if other == tslib.iNaT:
                 other = np.nan
         else:
@@ -1270,7 +1292,7 @@ class TimeDeltaBlock(IntBlock):
                 result = result.astype('m8[ns]')
             result[mask] = tslib.iNaT
         elif isinstance(result, np.integer):
-            result = np.timedelta64(result)
+            result = lib.Timedelta(result)
         return result
 
     def should_store(self, value):
@@ -1289,17 +1311,21 @@ class TimeDeltaBlock(IntBlock):
             na_rep = 'NaT'
         rvalues[mask] = na_rep
         imask = (~mask).ravel()
-        rvalues.flat[imask] = np.array([lib.repr_timedelta64(val)
+
+        #### FIXME ####
+        # should use the core.format.Timedelta64Formatter here
+        # to figure what format to pass to the Timedelta
+        # e.g. to not show the decimals say
+        rvalues.flat[imask] = np.array([Timedelta(val)._repr_base(format='all')
                                         for val in values.ravel()[imask]],
                                        dtype=object)
         return rvalues.tolist()
 
 
     def get_values(self, dtype=None):
-        # return object dtypes as datetime.timedeltas
+        # return object dtypes as Timedelta
         if dtype == object:
-            return lib.map_infer(self.values.ravel(),
-                                 lambda x: timedelta(microseconds=x.item() / 1000)
+            return lib.map_infer(self.values.ravel(), lib.Timedelta
                                  ).reshape(self.values.shape)
         return self.values
 
@@ -1628,6 +1654,27 @@ class CategoricalBlock(NonConsolidatableMixIn, ObjectBlock):
 
         return self.make_block_same_class(new_values, new_mgr_locs)
 
+    def putmask(self, mask, new, align=True, inplace=False):
+        """ putmask the data to the block; it is possible that we may create a
+        new dtype of block
+
+        return the resulting block(s)
+
+        Parameters
+        ----------
+        mask  : the condition to respect
+        new : a ndarray/object
+        align : boolean, perform alignment on other/cond, default is True
+        inplace : perform inplace modification, default is False
+
+        Returns
+        -------
+        a new block(s), the result of the putmask
+        """
+        new_values = self.values if inplace else self.values.copy()
+        new_values[mask] = new
+        return [self.make_block_same_class(values=new_values, placement=self.mgr_locs)]
+
     def _astype(self, dtype, copy=False, raise_on_error=True, values=None,
                 klass=None):
         """
@@ -1654,12 +1701,12 @@ class CategoricalBlock(NonConsolidatableMixIn, ObjectBlock):
         return the block concatenation
         """
 
-        levels = self.values.levels
+        categories = self.values.categories
         for b in blocks:
-            if not levels.equals(b.values.levels):
+            if not categories.equals(b.values.categories):
                 raise ValueError("incompatible levels in categorical block merge")
 
-        return self._holder(values[0], levels=levels)
+        return self._holder(values[0], categories=categories)
 
     def to_native_types(self, slicer=None, na_rep='', **kwargs):
         """ convert to our native types format, slicing if desired """
@@ -1787,16 +1834,6 @@ class DatetimeBlock(Block):
     def should_store(self, value):
         return issubclass(value.dtype.type, np.datetime64)
 
-    def astype(self, dtype, copy=False, raise_on_error=True):
-        """
-        handle convert to object as a special case
-        """
-        klass = None
-        if np.dtype(dtype).type == np.object_:
-            klass = ObjectBlock
-        return self._astype(dtype, copy=copy, raise_on_error=raise_on_error,
-                            klass=klass)
-
     def set(self, locs, values, check=False):
         """
         Modify Block in-place with new item value
@@ -1818,6 +1855,7 @@ class DatetimeBlock(Block):
                       .reshape(self.values.shape)
         return self.values
 
+
 class SparseBlock(NonConsolidatableMixIn, Block):
     """ implement as a list of sparse arrays of the same dtype """
     __slots__ = ()
@@ -1826,27 +1864,6 @@ class SparseBlock(NonConsolidatableMixIn, Block):
     _can_hold_na = True
     _ftype = 'sparse'
     _holder = SparseArray
-
-    def __init__(self, values, placement,
-                 ndim=None, fastpath=False,):
-
-        # Placement must be converted to BlockPlacement via property setter
-        # before ndim logic, because placement may be a slice which doesn't
-        # have a length.
-        self.mgr_locs = placement
-
-        # kludgetastic
-        if ndim is None:
-            if len(self.mgr_locs) != 1:
-                ndim = 1
-            else:
-                ndim = 2
-        self.ndim = ndim
-
-        if not isinstance(values, SparseArray):
-            raise TypeError("values must be SparseArray")
-
-        self.values = values
 
     @property
     def shape(self):
@@ -3054,7 +3071,7 @@ class BlockManager(PandasObject):
         """
         new_index = _ensure_index(new_index)
         new_index, indexer = self.axes[axis].reindex(
-            new_index, method=method, limit=limit, copy_if_needed=True)
+            new_index, method=method, limit=limit)
 
         return self.reindex_indexer(new_index, indexer, axis=axis,
                                     fill_value=fill_value, copy=copy)
@@ -3479,7 +3496,7 @@ def create_block_manager_from_arrays(arrays, names, axes):
         mgr._consolidate_inplace()
         return mgr
     except (ValueError) as e:
-        construction_error(len(arrays), arrays[0].shape[1:], axes, e)
+        construction_error(len(arrays), arrays[0].shape, axes, e)
 
 
 def form_blocks(arrays, names, axes):
@@ -3890,14 +3907,16 @@ def _putmask_smart(v, m, n):
 
     Parameters
     ----------
-    v : array_like
-    m : array_like
-    n : array_like
+    v : `values`, updated in-place (array like)
+    m : `mask`, applies to both sides (array like)
+    n : `new values` either scalar or an array like aligned with `values`
     """
 
     # n should be the length of the mask or a scalar here
     if not is_list_like(n):
         n = np.array([n] * len(m))
+    elif isinstance(n, np.ndarray) and n.ndim == 0: # numpy scalar
+        n = np.repeat(np.array(n, ndmin=1), len(m))
 
     # see if we are only masking values that if putted
     # will work in the current dtype
@@ -3915,10 +3934,10 @@ def _putmask_smart(v, m, n):
     dtype, _ = com._maybe_promote(n.dtype)
     nv = v.astype(dtype)
     try:
-        nv[m] = n
+        nv[m] = n[m]
     except ValueError:
         idx, = np.where(np.squeeze(m))
-        for mask_index, new_val in zip(idx, n):
+        for mask_index, new_val in zip(idx, n[m]):
             nv[mask_index] = new_val
     return nv
 

@@ -90,7 +90,7 @@ this using the ``keys`` argument:
    concatenated
 
 As you can see (if you've read the rest of the documentation), the resulting
-object's index has a :ref:`hierarchical index <indexing.hierarchical>`. This
+object's index has a :ref:`hierarchical index <advanced.hierarchical>`. This
 means that we can now do stuff like select out each chunk by key:
 
 .. ipython:: python
@@ -99,6 +99,18 @@ means that we can now do stuff like select out each chunk by key:
 
 It's not a stretch to see how this can be very useful. More detail on this
 functionality below.
+
+.. note::
+   It is worth noting however, that ``concat`` (and therefore ``append``) makes
+   a full copy of the data, and that constantly reusing this function can
+   create a signifcant performance hit. If you need to use the operation over
+   several datasets, use a list comprehension.
+
+::
+
+   frames = [ process_your_file(f) for f in files ]
+   result = pd.concat(frames)
+
 
 Set logic on the other axes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -118,9 +130,9 @@ behavior:
 
 .. ipython:: python
 
-   from pandas.util.testing import rands
+   from pandas.util.testing import rands_array
    df = DataFrame(np.random.randn(10, 4), columns=['a', 'b', 'c', 'd'],
-                  index=[rands(5) for _ in range(10)])
+                  index=rands_array(5, 10))
    df
 
    concat([df.ix[:7, ['a', 'b']], df.ix[2:-2, ['c']],

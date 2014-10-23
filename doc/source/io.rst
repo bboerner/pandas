@@ -100,8 +100,10 @@ They can take a number of arguments:
     a list of integers that specify row locations for a multi-index on the columns
     E.g. [0,1,3]. Intervening rows that are not specified will be
     skipped (e.g. 2 in this example are skipped). Note that this parameter
-    ignores commented lines, so header=0 denotes the first line of
-    data rather than the first line of the file.
+    ignores commented lines and empty lines if ``skip_blank_lines=True`` (the default),
+    so header=0 denotes the first line of data rather than the first line of the file.
+  - ``skip_blank_lines``: whether to skip over blank lines rather than interpreting
+    them as NaN values
   - ``skiprows``: A collection of numbers for rows in the file to skip. Can
     also be an integer to skip the first ``n`` rows
   - ``index_col``: column number, column name, or list of column numbers/names,
@@ -149,7 +151,7 @@ They can take a number of arguments:
   - ``escapechar`` : string, to specify how to escape quoted data
   - ``comment``: Indicates remainder of line should not be parsed. If found at the
     beginning of a line, the line will be ignored altogether. This parameter
-    must be a single character. Also, fully commented lines
+    must be a single character. Like empty lines, fully commented lines
     are ignored by the parameter `header` but not by `skiprows`. For example,
     if comment='#', parsing '#empty\n1,2,3\na,b,c' with `header=0` will
     result in '1,2,3' being treated as the header.
@@ -165,7 +167,9 @@ They can take a number of arguments:
   - ``converters``: a dictionary of functions for converting values in certain
     columns, where keys are either integers or column labels
   - ``encoding``: a string representing the encoding to use for decoding
-    unicode data, e.g. ``'utf-8``` or ``'latin-1'``.
+    unicode data, e.g. ``'utf-8``` or ``'latin-1'``. `Full list of Python
+    standard encodings
+    <https://docs.python.org/3/library/codecs.html#standard-encodings>`_
   - ``verbose``: show number of NA values inserted in non-numeric columns
   - ``squeeze``: if True then output with only one column is turned into Series
   - ``error_bad_lines``: if False then any lines causing an error will be skipped :ref:`bad lines <io.bad_lines>`
@@ -174,7 +178,12 @@ They can take a number of arguments:
   - ``mangle_dupe_cols``: boolean, default True, then duplicate columns will be specified
     as 'X.0'...'X.N', rather than 'X'...'X'
   - ``tupleize_cols``: boolean, default False, if False, convert a list of tuples
-    to a multi-index of columns, otherwise, leave the column index as a list of tuples
+    to a multi-index of columns, otherwise, leave the column index as a list of
+    tuples
+  - ``float_precision`` : string, default None. Specifies which converter the C
+    engine should use for floating-point values. The options are None for the
+    ordinary converter, 'high' for the high-precision converter, and
+    'round_trip' for the round-trip converter.
 
 .. ipython:: python
    :suppress:
@@ -259,27 +268,6 @@ after a delimiter:
    print(data)
    pd.read_csv(StringIO(data), skipinitialspace=True)
 
-Moreover, ``read_csv`` ignores any completely commented lines:
-
-.. ipython:: python
-
-   data = 'a,b,c\n# commented line\n1,2,3\n#another comment\n4,5,6'
-   print(data)
-   pd.read_csv(StringIO(data), comment='#')
-
-.. note::
-
-   The presence of ignored lines might create ambiguities involving line numbers;
-   the parameter ``header`` uses row numbers (ignoring commented
-   lines), while ``skiprows`` uses line numbers (including commented lines):
-
-   .. ipython:: python
-
-      data = '#comment\na,b,c\nA,B,C\n1,2,3'
-      pd.read_csv(StringIO(data), comment='#', header=1)
-      data = 'A,B,C\n#comment\na,b,c\n1,2,3'
-      pd.read_csv(StringIO(data), comment='#', skiprows=2)
-
 The parsers make every attempt to "do the right thing" and not be very
 fragile. Type inference is a pretty big deal. So if a column can be coerced to
 integer dtype without altering the contents, it will do so. Any non-numeric
@@ -356,6 +344,50 @@ file, either using the column names or position numbers:
     pd.read_csv(StringIO(data), usecols=['b', 'd'])
     pd.read_csv(StringIO(data), usecols=[0, 2, 3])
 
+.. _io.skiplines:
+
+Ignoring line comments and empty lines
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the ``comment`` parameter is specified, then completely commented lines will
+be ignored. By default, completely blank lines will be ignored as well. Both of
+these are API changes introduced in version 0.15.
+
+.. ipython:: python
+
+   data = '\na,b,c\n  \n# commented line\n1,2,3\n\n4,5,6'
+   print(data)
+   pd.read_csv(StringIO(data), comment='#')
+
+If ``skip_blank_lines=False``, then ``read_csv`` will not ignore blank lines:
+
+.. ipython:: python
+
+   data = 'a,b,c\n\n1,2,3\n\n\n4,5,6'
+   pd.read_csv(StringIO(data), skip_blank_lines=False)
+
+.. warning::
+
+   The presence of ignored lines might create ambiguities involving line numbers;
+   the parameter ``header`` uses row numbers (ignoring commented/empty
+   lines), while ``skiprows`` uses line numbers (including commented/empty lines):
+
+   .. ipython:: python
+
+      data = '#comment\na,b,c\nA,B,C\n1,2,3'
+      pd.read_csv(StringIO(data), comment='#', header=1)
+      data = 'A,B,C\n#comment\na,b,c\n1,2,3'
+      pd.read_csv(StringIO(data), comment='#', skiprows=2)
+
+   If both ``header`` and ``skiprows`` are specified, ``header`` will be
+   relative to the end of ``skiprows``. For example:
+
+   .. ipython:: python
+
+      data = '# empty\n# second empty line\n# third empty' \
+                'line\nX,Y,Z\n1,2,3\nA,B,C\n1,2.,4.\n5.,NaN,10.0'
+      print(data)
+      pd.read_csv(StringIO(data), comment='#', skiprows=4, header=1)
+
 .. _io.unicode:
 
 Dealing with Unicode Data
@@ -372,7 +404,9 @@ result in byte strings being decoded to unicode in the result:
    df['word'][1]
 
 Some formats which encode all characters as multiple bytes, like UTF-16, won't
-parse correctly at all without specifying the encoding.
+parse correctly at all without specifying the encoding. `Full list of Python
+standard encodings
+<https://docs.python.org/3/library/codecs.html#standard-encodings>`_
 
 .. _io.index_col:
 
@@ -506,6 +540,25 @@ data columns:
    instead of a regular `dict` if this matters to you. Because of this, when using a
    dict for 'parse_dates' in conjunction with the `index_col` argument, it's best to
    specify `index_col` as a column label rather then as an index on the resulting frame.
+
+
+.. _io.float_precision:
+
+Specifying method for floating-point conversion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The parameter ``float_precision`` can be specified in order to use
+a specific floating-point converter during parsing with the C engine.
+The options are the ordinary converter, the high-precision converter, and
+the round-trip converter (which is guaranteed to round-trip values after
+writing to a file). For example:
+
+.. ipython:: python
+
+   val = '0.3066101993807095471566981359501369297504425048828125'
+   data = 'a,b,c\n1,2,{0}'.format(val)
+   abs(pd.read_csv(StringIO(data), engine='c', float_precision=None)['c'][0] - float(val))
+   abs(pd.read_csv(StringIO(data), engine='c', float_precision='high')['c'][0] - float(val))
+   abs(pd.read_csv(StringIO(data), engine='c', float_precision='round_trip')['c'][0] - float(val))
 
 
 Date Parsing Functions
@@ -2005,7 +2058,12 @@ files if `Xlsxwriter`_ is not available.
 .. _xlwt: http://www.python-excel.org
 
 To specify which writer you want to use, you can pass an engine keyword
-argument to ``to_excel`` and to ``ExcelWriter``.
+argument to ``to_excel`` and to ``ExcelWriter``. The built-in engines are:
+
+- ``openpyxl``: This includes stable support for OpenPyxl 1.6.1 up to but
+  not including 2.0.0, and experimental support for OpenPyxl 2.0.0 and later.
+- ``xlsxwriter``
+- ``xlwt``
 
 .. code-block:: python
 
@@ -2541,17 +2599,17 @@ The right-hand side of the sub-expression (after a comparison operator) can be:
       string = "HolyMoly'"
       store.select('df',  'index == %s' % string)
 
-    The latter will **not** work and will raise a ``SyntaxError``.Note that
-    there's a single quote followed by a double quote in the ``string``
-    variable.
+   The latter will **not** work and will raise a ``SyntaxError``.Note that
+   there's a single quote followed by a double quote in the ``string``
+   variable.
 
-    If you *must* interpolate, use the ``'%r'`` format specifier
+   If you *must* interpolate, use the ``'%r'`` format specifier
 
-    .. code-block:: python
+   .. code-block:: python
 
-       store.select('df', 'index == %r' % string)
+      store.select('df', 'index == %r' % string)
 
-    which will quote ``string``.
+   which will quote ``string``.
 
 
 Here are some examples:
@@ -3267,6 +3325,12 @@ the database using :func:`~pandas.DataFrame.to_sql`.
 
     data.to_sql('data', engine)
 
+With some databases, writing large DataFrames can result in errors due to packet size limitations being exceeded. This can be avoided by setting the ``chunksize`` parameter when calling ``to_sql``.  For example, the following writes ``data`` to the database in batches of 1000 rows at a time:
+
+.. ipython:: python
+
+    data.to_sql('data_chunked', engine, chunksize=1000)
+
 .. note::
 
     Due to the limited support for timedelta's in the different database
@@ -3314,6 +3378,20 @@ to pass to :func:`pandas.to_datetime`:
 
 You can check if a table exists using :func:`~pandas.io.sql.has_table`
 
+Schema support
+~~~~~~~~~~~~~~
+
+.. versionadded:: 0.15.0
+
+Reading from and writing to different schema's is supported through the ``schema``
+keyword in the :func:`~pandas.read_sql_table` and :func:`~pandas.DataFrame.to_sql`
+functions. Note however that this depends on the database flavor (sqlite does not
+have schema's). For example:
+
+.. code-block:: python
+
+   df.to_sql('table', engine, schema='other_schema')
+   pd.read_sql_table('table', engine, schema='other_schema')
 
 Querying
 ~~~~~~~~
@@ -3333,6 +3411,18 @@ Of course, you can specify a more "complex" query.
 
    pd.read_sql_query("SELECT id, Col_1, Col_2 FROM data WHERE id = 42;", engine)
 
+The :func:`~pandas.read_sql_query` function supports a ``chunksize`` argument.
+Specifying this will return an iterator through chunks of the query result:
+
+.. ipython:: python
+
+    df = pd.DataFrame(np.random.randn(20, 3), columns=list('abc'))
+    df.to_sql('data_chunks', engine, index=False)
+
+.. ipython:: python
+
+    for chunk in pd.read_sql_query("SELECT * FROM data_chunks", engine, chunksize=5):
+        print(chunk)
 
 You can also run a plain query without creating a dataframe with
 :func:`~pandas.io.sql.execute`. This is useful for queries that don't return values,
@@ -3558,8 +3648,20 @@ read and used to create a ``Categorical`` variable from them. Value labels can
 also be retrieved by the function ``variable_labels``, which requires data to be
 called before (see ``pandas.io.stata.StataReader``).
 
+The parameter ``convert_missing`` indicates whether missing value
+representations in Stata should be preserved.  If ``False`` (the default),
+missing values are represented as ``np.nan``.  If ``True``, missing values are
+represented using ``StataMissingValue`` objects, and columns containing missing
+values will have ``dtype`` set to ``object``.
+
 The StataReader supports .dta Formats 104, 105, 108, 113-115 and 117.
 Alternatively, the function :func:`~pandas.io.stata.read_stata` can be used
+
+.. note::
+
+   Setting ``preserve_dtypes=False`` will upcast all integer data types to
+   ``int64`` and all floating point data types to ``float64``.  By default,
+   the Stata data types are preserved when importing.
 
 .. ipython:: python
    :suppress:

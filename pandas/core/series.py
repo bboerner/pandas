@@ -19,8 +19,9 @@ from pandas.core.common import (isnull, notnull, _is_bool_indexer,
                                 is_list_like, _values_from_object,
                                 _possibly_cast_to_datetime, _possibly_castable,
                                 _possibly_convert_platform, _try_sort,
-                                ABCSparseArray, _maybe_match_name,
-                                _ensure_object, SettingWithCopyError)
+                                ABCSparseArray, _maybe_match_name, _coerce_to_dtype,
+                                _ensure_object, SettingWithCopyError,
+                                _maybe_box_datetimelike, ABCDataFrame)
 from pandas.core.index import (Index, MultiIndex, InvalidIndexError,
                                _ensure_index)
 from pandas.core.indexing import _check_bool_indexer, _maybe_convert_indices
@@ -28,12 +29,12 @@ from pandas.core import generic, base
 from pandas.core.internals import SingleBlockManager
 from pandas.core.categorical import Categorical
 from pandas.tseries.index import DatetimeIndex
+from pandas.tseries.tdi import TimedeltaIndex
 from pandas.tseries.period import PeriodIndex, Period
 from pandas import compat
 from pandas.util.terminal import get_terminal_size
 from pandas.compat import zip, u, OrderedDict
 
-import pandas.core.array as pa
 import pandas.core.ops as ops
 from pandas.core.algorithms import select_n
 
@@ -143,7 +144,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
 
                 data = data._to_embed(keep_tz=True)
                 copy = True
-            elif isinstance(data, pa.Array):
+            elif isinstance(data, np.ndarray):
                 pass
             elif isinstance(data, Series):
                 if name is None:
@@ -163,12 +164,12 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
                     if isinstance(index, DatetimeIndex):
                         # coerce back to datetime objects for lookup
                         data = lib.fast_multiget(data, index.astype('O'),
-                                                 default=pa.NA)
+                                                 default=np.nan)
                     elif isinstance(index, PeriodIndex):
                         data = [data.get(i, nan) for i in index]
                     else:
                         data = lib.fast_multiget(data, index.values,
-                                                 default=pa.NA)
+                                                 default=np.nan)
                 except TypeError:
                     data = [data.get(i, nan) for i in index]
 
@@ -248,9 +249,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
 
         is_all_dates = labels.is_all_dates
         if is_all_dates:
-            from pandas.tseries.index import DatetimeIndex
-            from pandas.tseries.period import PeriodIndex
-            if not isinstance(labels, (DatetimeIndex, PeriodIndex)):
+            if not isinstance(labels, (DatetimeIndex, PeriodIndex, TimedeltaIndex)):
                 labels = DatetimeIndex(labels)
 
                 # need to set here becuase we changed the index
@@ -268,8 +267,9 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         else:
             object.__setattr__(self, '_subtyp', 'series')
 
-    def _update_inplace(self, result):
-        return generic.NDFrame._update_inplace(self, result)
+    def _update_inplace(self, result, **kwargs):
+        # we want to call the generic version and not the IndexOpsMixin
+        return generic.NDFrame._update_inplace(self, result, **kwargs)
 
     # ndarray compatibility
     @property
@@ -331,11 +331,27 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
 
     def nonzero(self):
         """
-        return the a boolean array of the underlying data is nonzero
+        Return the indices of the elements that are non-zero
 
-        See also
+        This method is equivalent to calling `numpy.nonzero` on the
+        series data. For compatability with NumPy, the return value is
+        the same (a tuple with an array of indices for each dimension),
+        but it will always be a one-item tuple because series only have
+        one dimension.
+
+        Examples
         --------
-        numpy.ndarray.nonzero
+        >>> s = pd.Series([0, 3, 0, 4])
+        >>> s.nonzero()
+        (array([1, 3]),)
+        >>> s.iloc[s.nonzero()[0]]
+        1    3
+        3    4
+        dtype: int64
+
+        See Also
+        --------
+        numpy.nonzero
         """
         return self.values.nonzero()
 
@@ -530,6 +546,9 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         if isinstance(key, slice):
             indexer = self.index._convert_slice_indexer(key, typ='getitem')
             return self._get_values(indexer)
+        elif isinstance(key, ABCDataFrame):
+            raise TypeError('Indexing a Series with DataFrame is not supported, '\
+                            'use the appropriate DataFrame column')
         else:
             if isinstance(key, tuple):
                 try:
@@ -542,7 +561,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
                     raise
 
             # pragma: no cover
-            if not isinstance(key, (list, pa.Array, Series, Index)):
+            if not isinstance(key, (list, np.ndarray, Series, Index)):
                 key = list(key)
 
             if isinstance(key, Index):
@@ -672,7 +691,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
                 except Exception:
                     pass
 
-            if not isinstance(key, (list, Series, pa.Array, Series)):
+            if not isinstance(key, (list, Series, np.ndarray, Series)):
                 try:
                     key = list(key)
                 except:
@@ -766,7 +785,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         value : scalar value
         """
         if takeable is True:
-            return self.values[label]
+            return _maybe_box_datetimelike(self.values[label])
         return self.index.get_value(self.values, label)
 
     def set_value(self, label, value, takeable=False):
@@ -823,7 +842,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         resetted : DataFrame, or Series if drop == True
         """
         if drop:
-            new_index = pa.arange(len(self))
+            new_index = np.arange(len(self))
             if level is not None and isinstance(self.index, MultiIndex):
                 if not isinstance(level, (tuple, list)):
                     level = [level]
@@ -906,7 +925,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
 
         # Categorical
         if com.is_categorical_dtype(self.dtype):
-            level_info = self.cat._repr_level_info()
+            level_info = self.values._repr_categories_info()
             return u('%sLength: %d, dtype: %s\n%s') % (namestr,
                                                        len(self),
                                                        str(self.dtype.name),
@@ -987,6 +1006,8 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
             return iter(self.values)
         elif np.issubdtype(self.dtype, np.datetime64):
             return (lib.Timestamp(x) for x in self.values)
+        elif np.issubdtype(self.dtype, np.timedelta64):
+            return (lib.Timedelta(x) for x in self.values)
         else:
             return iter(self.values)
 
@@ -1093,7 +1114,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
             # call cython function
             max_bin = len(level_index)
             labels = com._ensure_int64(self.index.labels[level])
-            counts = lib.count_level_1d(mask.view(pa.uint8),
+            counts = lib.count_level_1d(mask.view(np.uint8),
                                         labels, max_bin)
             return self._constructor(counts,
                                      index=level_index).__finalize__(self)
@@ -1153,7 +1174,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         """
         i = nanops.nanargmin(_values_from_object(self), skipna=skipna)
         if i == -1:
-            return pa.NA
+            return np.nan
         return self.index[i]
 
     def idxmax(self, axis=None, out=None, skipna=True):
@@ -1180,14 +1201,14 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         """
         i = nanops.nanargmax(_values_from_object(self), skipna=skipna)
         if i == -1:
-            return pa.NA
+            return np.nan
         return self.index[i]
 
     # ndarray compat
     argmin = idxmin
     argmax = idxmax
 
-    @Appender(pa.Array.round.__doc__)
+    @Appender(np.ndarray.round.__doc__)
     def round(self, decimals=0, out=None):
         """
 
@@ -1226,9 +1247,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         0.75    3.25
         dtype: float64
         """
-        valid_values = self.dropna().values
-        if len(valid_values) == 0:
-            return pa.NA
+        valid = self.dropna()
 
         def multi(values, qs):
             if com.is_list_like(qs):
@@ -1237,17 +1256,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
             else:
                 return _quantile(values, qs*100)
 
-        if com.is_datetime64_dtype(self):
-            values = _values_from_object(self).view('i8')
-            result = multi(values, q)
-            if com.is_list_like(q):
-                result = result.map(lib.Timestamp)
-            else:
-                result = lib.Timestamp(result)
-        else:
-            result = multi(valid_values, q)
-
-        return result
+        return self._maybe_box(lambda values: multi(values, q), dropna=True)
 
     def ptp(self, axis=None, out=None):
         return _values_from_object(self).ptp(axis, out)
@@ -1274,7 +1283,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         """
         this, other = self.align(other, join='inner', copy=False)
         if len(this) == 0:
-            return pa.NA
+            return np.nan
         return nanops.nancorr(this.values, other.values, method=method,
                               min_periods=min_periods)
 
@@ -1296,7 +1305,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         """
         this, other = self.align(other, join='inner', copy=False)
         if len(this) == 0:
-            return pa.NA
+            return np.nan
         return nanops.nancov(this.values, other.values,
                              min_periods=min_periods)
 
@@ -1367,6 +1376,65 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
             return np.dot(lvals, rvals)
         else:  # pragma: no cover
             raise TypeError('unsupported type: %s' % type(other))
+
+    def searchsorted(self, v, side='left', sorter=None):
+        """Find indices where elements should be inserted to maintain order.
+
+        Find the indices into a sorted Series `self` such that, if the
+        corresponding elements in `v` were inserted before the indices, the
+        order of `self` would be preserved.
+
+        Parameters
+        ----------
+        v : array_like
+            Values to insert into `a`.
+        side : {'left', 'right'}, optional
+            If 'left', the index of the first suitable location found is given.
+            If 'right', return the last such index.  If there is no suitable
+            index, return either 0 or N (where N is the length of `a`).
+        sorter : 1-D array_like, optional
+            Optional array of integer indices that sort `self` into ascending
+            order. They are typically the result of ``np.argsort``.
+
+        Returns
+        -------
+        indices : array of ints
+            Array of insertion points with the same shape as `v`.
+
+        See Also
+        --------
+        Series.sort
+        Series.order
+        numpy.searchsorted
+
+        Notes
+        -----
+        Binary search is used to find the required insertion points.
+
+        Examples
+        --------
+        >>> x = pd.Series([1, 2, 3])
+        >>> x
+        0    1
+        1    2
+        2    3
+        dtype: int64
+        >>> x.searchsorted(4)
+        array([3])
+        >>> x.searchsorted([0, 4])
+        array([0, 3])
+        >>> x.searchsorted([1, 3], side='left')
+        array([0, 2])
+        >>> x.searchsorted([1, 3], side='right')
+        array([1, 3])
+        >>> x.searchsorted([1, 2], side='right', sorter=[0, 2, 1])
+        array([1, 3])
+        """
+        if sorter is not None:
+            sorter = com._ensure_platform_int(sorter)
+
+        return self.values.searchsorted(Series(v).values, side=side,
+                                        sorter=sorter)
 
     #------------------------------------------------------------------------------
     # Combination
@@ -1458,9 +1526,9 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         result : Series
         """
         if isinstance(other, Series):
-            new_index = self.index + other.index
+            new_index = self.index.union(other.index)
             new_name = _maybe_match_name(self, other)
-            new_values = pa.empty(len(new_index), dtype=self.dtype)
+            new_values = np.empty(len(new_index), dtype=self.dtype)
             for i, idx in enumerate(new_index):
                 lv = self.get(idx, fill_value)
                 rv = other.get(idx, fill_value)
@@ -1484,7 +1552,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         -------
         y : Series
         """
-        new_index = self.index + other.index
+        new_index = self.index.union(other.index)
         this = self.reindex(new_index, copy=False)
         other = other.reindex(new_index, copy=False)
         name = _maybe_match_name(self, other)
@@ -1686,12 +1754,12 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
                 return arr.argsort(kind='quicksort')
 
         arr = self.values
-        sortedIdx = pa.empty(len(self), dtype=np.int32)
+        sortedIdx = np.empty(len(self), dtype=np.int32)
 
         bad = isnull(arr)
 
         good = ~bad
-        idx = pa.arange(len(self))
+        idx = np.arange(len(self))
 
         argsorted = _try_kind_sort(arr[good])
 
@@ -1924,7 +1992,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
             mask = isnull(values)
 
             def map_f(values, f):
-                return lib.map_infer_mask(values, f, mask.view(pa.uint8))
+                return lib.map_infer_mask(values, f, mask.view(np.uint8))
         else:
             map_f = lib.map_infer
 
@@ -2000,8 +2068,48 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         delegate = self.values
         if isinstance(delegate, np.ndarray):
             return op(delegate, skipna=skipna, **kwds)
+
         return delegate._reduce(op=op, axis=axis, skipna=skipna, numeric_only=numeric_only,
                                 filter_type=filter_type, name=name, **kwds)
+
+    def _maybe_box(self, func, dropna=False):
+        """
+        evaluate a function with possible input/output conversion if we are i8
+
+        Parameters
+        ----------
+        dropna : bool, default False
+           whether to drop values if necessary
+
+        """
+        if dropna:
+            values = self.dropna().values
+        else:
+            values = self.values
+
+        if com.needs_i8_conversion(self):
+            boxer = com.i8_boxer(self)
+
+            if len(values) == 0:
+                return boxer(iNaT)
+
+            values = values.view('i8')
+            result = func(values)
+
+            if com.is_list_like(result):
+                result = result.map(boxer)
+            else:
+                result = boxer(result)
+
+        else:
+
+            # let the function return nan if appropriate
+            if dropna:
+                if len(values) == 0:
+                    return np.nan
+            result = func(values)
+
+        return result
 
     def _reindex_indexer(self, new_index, indexer, copy):
         if indexer is None:
@@ -2200,7 +2308,8 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
 
         Parameters
         ----------
-        path : string file path or file handle / StringIO
+        path : string file path or file handle / StringIO. If None is provided
+            the result is returned as a string.
         na_rep : string, default ''
             Missing data representation
         float_format : string, default None
@@ -2224,10 +2333,13 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
         """
         from pandas.core.frame import DataFrame
         df = DataFrame(self)
-        df.to_csv(path, index=index, sep=sep, na_rep=na_rep,
+        # result is only a string if no path provided, otherwise None
+        result = df.to_csv(path, index=index, sep=sep, na_rep=na_rep,
                   float_format=float_format, header=header,
                   index_label=index_label, mode=mode, nanRep=nanRep,
                   encoding=encoding, date_format=date_format)
+        if path is None:
+            return result
 
     def dropna(self, axis=0, inplace=False, **kwargs):
         """
@@ -2311,7 +2423,7 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
                 start = start.ordinal
 
             if where < start:
-                return pa.NA
+                return np.nan
             loc = self.index.searchsorted(where, side='right')
             if loc > 0:
                 loc -= 1
@@ -2390,11 +2502,12 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
     #------------------------------------------------------------------------------
     # Categorical methods
 
-    @property
+    @cache_readonly
     def cat(self):
+        from pandas.core.categorical import CategoricalAccessor
         if not com.is_categorical_dtype(self.dtype):
             raise TypeError("Can only use .cat accessor with a 'category' dtype")
-        return self.values
+        return CategoricalAccessor(self.values, self.index)
 
 Series._setup_axes(['index'], info_axis=0, stat_axis=0,
                    aliases={'rows': 0})
@@ -2425,6 +2538,11 @@ def _sanitize_index(data, index, copy=False):
         data = data._to_embed(keep_tz=True)
         if copy:
             data = data.copy()
+    elif isinstance(data, np.ndarray):
+
+        # coerce datetimelike types
+        if data.dtype.kind in ['M','m']:
+            data = _sanitize_array(data, index, copy=copy)
 
     return data
 
@@ -2433,7 +2551,7 @@ def _sanitize_array(data, index, dtype=None, copy=False,
     """ sanitize input data to an ndarray, copy if specified, coerce to the dtype if specified """
 
     if dtype is not None:
-        dtype = np.dtype(dtype)
+        dtype = _coerce_to_dtype(dtype)
 
     if isinstance(data, ma.MaskedArray):
         mask = ma.getmaskarray(data)
@@ -2452,16 +2570,18 @@ def _sanitize_array(data, index, dtype=None, copy=False,
 
         try:
             arr = _possibly_cast_to_datetime(arr, dtype)
-            subarr = pa.array(arr, dtype=dtype, copy=copy)
+            subarr = np.array(arr, dtype=dtype, copy=copy)
         except (ValueError, TypeError):
-            if dtype is not None and raise_cast_failure:
+            if com.is_categorical_dtype(dtype):
+                subarr = Categorical(arr)
+            elif dtype is not None and raise_cast_failure:
                 raise
-            else:  # pragma: no cover
-                subarr = pa.array(arr, dtype=object, copy=copy)
+            else:
+                subarr = np.array(arr, dtype=object, copy=copy)
         return subarr
 
     # GH #846
-    if isinstance(data, (pa.Array, Index, Series)):
+    if isinstance(data, (np.ndarray, Index, Series)):
         subarr = np.array(data, copy=False)
         if dtype is not None:
 
@@ -2506,7 +2626,7 @@ def _sanitize_array(data, index, dtype=None, copy=False,
             except Exception:
                 if raise_cast_failure:  # pragma: no cover
                     raise
-                subarr = pa.array(data, dtype=object, copy=copy)
+                subarr = np.array(data, dtype=object, copy=copy)
                 subarr = lib.maybe_convert_objects(subarr)
 
         else:
@@ -2520,7 +2640,7 @@ def _sanitize_array(data, index, dtype=None, copy=False,
     # scalar like
     if subarr.ndim == 0:
         if isinstance(data, list):  # pragma: no cover
-            subarr = pa.array(data, dtype=object)
+            subarr = np.array(data, dtype=object)
         elif index is not None:
             value = data
 
@@ -2531,7 +2651,7 @@ def _sanitize_array(data, index, dtype=None, copy=False,
                 # need to possibly convert the value here
                 value = _possibly_cast_to_datetime(value, dtype)
 
-            subarr = pa.empty(len(index), dtype=dtype)
+            subarr = np.empty(len(index), dtype=dtype)
             subarr.fill(value)
 
         else:
@@ -2544,11 +2664,11 @@ def _sanitize_array(data, index, dtype=None, copy=False,
             # a 1-element ndarray
             if len(subarr) != len(index) and len(subarr) == 1:
                 value = subarr[0]
-                subarr = pa.empty(len(index), dtype=subarr.dtype)
+                subarr = np.empty(len(index), dtype=subarr.dtype)
                 subarr.fill(value)
 
     elif subarr.ndim > 1:
-        if isinstance(data, pa.Array):
+        if isinstance(data, np.ndarray):
             raise Exception('Data must be 1-dimensional')
         else:
             subarr = _asarray_tuplesafe(data, dtype=dtype)
@@ -2556,7 +2676,7 @@ def _sanitize_array(data, index, dtype=None, copy=False,
     # This is to prevent mixed-type Series getting all casted to
     # NumPy string type, e.g. NaN --> '-1#IND'.
     if issubclass(subarr.dtype.type, compat.string_types):
-        subarr = pa.array(data, dtype=object, copy=copy)
+        subarr = np.array(data, dtype=object, copy=copy)
 
     return subarr
 

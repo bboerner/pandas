@@ -77,7 +77,7 @@ this form, use the ``pivot`` function:
 If the ``values`` argument is omitted, and the input DataFrame has more than
 one column of values which are not used as column or index inputs to ``pivot``,
 then the resulting "pivoted" DataFrame will have :ref:`hierarchical columns
-<indexing.hierarchical>` whose topmost level indicates the respective value
+<advanced.hierarchical>` whose topmost level indicates the respective value
 column:
 
 .. ipython:: python
@@ -103,7 +103,7 @@ Reshaping by stacking and unstacking
 Closely related to the ``pivot`` function are the related ``stack`` and
 ``unstack`` functions currently available on Series and DataFrame. These
 functions are designed to work together with ``MultiIndex`` objects (see the
-section on :ref:`hierarchical indexing <indexing.hierarchical>`). Here are
+section on :ref:`hierarchical indexing <advanced.hierarchical>`). Here are
 essentially what these functions do:
 
   - ``stack``: "pivot" a level of the (possibly hierarchical) column labels,
@@ -480,6 +480,49 @@ This function is often used along with discretization functions like ``cut``:
 
 See also :func:`Series.str.get_dummies <pandas.core.strings.StringMethods.get_dummies>`.
 
+.. versionadded:: 0.15.0
+
+:func:`get_dummies` also accepts a DataFrame. By default all categorical
+variables (categorical in the statistical sense,
+those with `object` or `categorical` dtype) are encoded as dummy variables.
+
+
+.. ipython:: python
+
+    df = pd.DataFrame({'A': ['a', 'b', 'a'], 'B': ['c', 'c', 'b'],
+                       'C': [1, 2, 3]})
+    pd.get_dummies(df)
+
+All non-object columns are included untouched in the output.
+
+You can control the columns that are encoded with the ``columns`` keyword.
+
+.. ipython:: python
+
+    pd.get_dummies(df, columns=['A'])
+
+Notice that the ``B`` column is still included in the output, it just hasn't
+been encoded. You can drop ``B`` before calling ``get_dummies`` if you don't
+want to include it in the output.
+
+As with the Series version, you can pass values for the ``prefix`` and
+``prefix_sep``. By default the column name is used as the prefix, and '_' as
+the prefix separator. You can specify ``prefix`` and ``prefix_sep`` in 3 ways
+
+- string: Use the same value for ``prefix`` or ``prefix_sep`` for each column
+  to be encoded
+- list: Must be the same length as the number of columns being encoded.
+- dict: Mapping column name to prefix
+
+.. ipython:: python
+
+    simple = pd.get_dummies(df, prefix='new_prefix')
+    simple
+    from_list = pd.get_dummies(df, prefix=['from_A', 'from_B'])
+    from_list
+    from_dict = pd.get_dummies(df, prefix={'B': 'from_B', 'A': 'from_A'})
+    from_dict
+
 Factorizing values
 ------------------
 
@@ -505,3 +548,10 @@ handling of NaN:
 
    pd.factorize(x, sort=True)
    np.unique(x, return_inverse=True)[::-1]
+
+.. note::
+    If you just want to handle one column as a categorical variable (like R's factor),
+    you can use  ``df["cat_col"] = pd.Categorical(df["col"])`` or
+    ``df["cat_col"] = df["col"].astype("category")``. For full docs on :class:`~pandas.Categorical`,
+    see the :ref:`Categorical introduction <categorical>` and the
+    :ref:`API documentation <api.categorical>`. This feature was introduced in version 0.15.

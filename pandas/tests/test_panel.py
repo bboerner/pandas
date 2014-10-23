@@ -18,6 +18,7 @@ from pandas.util.testing import (assert_panel_equal,
                                  assert_frame_equal,
                                  assert_series_equal,
                                  assert_almost_equal,
+                                 assert_produces_warning,
                                  ensure_clean,
                                  assertRaisesRegexp,
                                  makeCustomDataframe as mkdf,
@@ -667,24 +668,42 @@ class CheckIndexing(object):
 
     def test_ix_frame_align(self):
         from pandas import DataFrame
-        df = DataFrame(np.random.randn(2, 10))
-        df.sort_index(inplace=True)
-        p_orig = Panel(np.random.randn(3, 10, 2))
+        p_orig = tm.makePanel()
+        df = p_orig.ix[0].copy()
+        assert_frame_equal(p_orig['ItemA'],df)
 
         p = p_orig.copy()
         p.ix[0, :, :] = df
-        out = p.ix[0, :, :].T.reindex(df.index, columns=df.columns)
-        assert_frame_equal(out, df)
+        assert_panel_equal(p, p_orig)
 
         p = p_orig.copy()
         p.ix[0] = df
-        out = p.ix[0].T.reindex(df.index, columns=df.columns)
-        assert_frame_equal(out, df)
+        assert_panel_equal(p, p_orig)
+
+        p = p_orig.copy()
+        p.iloc[0, :, :] = df
+        assert_panel_equal(p, p_orig)
+
+        p = p_orig.copy()
+        p.iloc[0] = df
+        assert_panel_equal(p, p_orig)
+
+        p = p_orig.copy()
+        p.loc['ItemA'] = df
+        assert_panel_equal(p, p_orig)
+
+        p = p_orig.copy()
+        p.loc['ItemA', :, :] = df
+        assert_panel_equal(p, p_orig)
+
+        p = p_orig.copy()
+        p['ItemA'] = df
+        assert_panel_equal(p, p_orig)
 
         p = p_orig.copy()
         p.ix[0, [0, 1, 3, 5], -2:] = df
         out = p.ix[0, [0, 1, 3, 5], -2:]
-        assert_frame_equal(out, df.T.reindex([0, 1, 3, 5], p.minor_axis[-2:]))
+        assert_frame_equal(out, df.iloc[[0,1,3,5],[2,3]])
 
         # GH3830, panel assignent by values/frame
         for dtype in ['float64','int64']:
@@ -2323,6 +2342,13 @@ def test_panel_index():
     expected = MultiIndex.from_arrays([np.tile([1, 2, 3, 4], 3),
                                        np.repeat([1, 2, 3], 4)])
     assert(index.equals(expected))
+
+
+def test_import_warnings():
+    # GH8152
+    panel = Panel(np.random.rand(3, 3, 3))
+    with assert_produces_warning():
+        panel.major_xs(1, copy=False)
 
 if __name__ == '__main__':
     import nose

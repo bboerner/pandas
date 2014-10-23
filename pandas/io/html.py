@@ -645,9 +645,9 @@ def _parser_dispatch(flavor):
 
     if flavor in ('bs4', 'html5lib'):
         if not _HAS_HTML5LIB:
-            raise ImportError("html5lib not found please install it")
+            raise ImportError("html5lib not found, please install it")
         if not _HAS_BS4:
-            raise ImportError("bs4 not found please install it")
+            raise ImportError("BeautifulSoup4 (bs4) not found, please install it")
         if bs4.__version__ == LooseVersion('4.2.0'):
             raise ValueError("You're using a version"
                              " of BeautifulSoup4 (4.2.0) that has been"
@@ -658,7 +658,7 @@ def _parser_dispatch(flavor):
                              " and later releases will work.")
     else:
         if not _HAS_LXML:
-            raise ImportError("lxml not found please install it")
+            raise ImportError("lxml not found, please install it")
     return _valid_parsers[flavor]
 
 
@@ -711,9 +711,14 @@ def _parse(flavor, io, match, header, index_col, skiprows, infer_types,
     else:
         raise_with_traceback(retained)
 
-    return [_data_to_frame(table, header, index_col, skiprows, infer_types,
-                           parse_dates, tupleize_cols, thousands)
-            for table in tables]
+    ret = []
+    for table in tables:
+        try:
+            ret.append(_data_to_frame(table, header, index_col, skiprows,
+                        infer_types, parse_dates, tupleize_cols, thousands))
+        except StopIteration: # empty table
+            continue
+    return ret
 
 
 def read_html(io, match='.+', flavor=None, header=None, index_col=None,

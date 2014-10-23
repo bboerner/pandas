@@ -124,7 +124,9 @@ def factorize(values, sort=False, order=None, na_sentinel=-1):
     from pandas.core.index import Index
     from pandas.core.series import Series
     vals = np.asarray(values)
+
     is_datetime = com.is_datetime64_dtype(vals)
+    is_timedelta = com.is_timedelta64_dtype(vals)
     (hash_klass, vec_klass), vals = _get_data_algo(vals, _hashtables)
 
     table = hash_klass(len(vals))
@@ -161,6 +163,8 @@ def factorize(values, sort=False, order=None, na_sentinel=-1):
 
     if is_datetime:
         uniques = uniques.astype('M8[ns]')
+    elif is_timedelta:
+        uniques = uniques.astype('m8[ns]')
     if isinstance(values, Index):
         uniques = values._simple_new(uniques, None, freq=getattr(values, 'freq', None),
                                      tz=getattr(values, 'tz', None))
@@ -196,8 +200,9 @@ def value_counts(values, sort=True, ascending=False, normalize=False,
     """
     from pandas.core.series import Series
     from pandas.tools.tile import cut
+    from pandas.tseries.period import PeriodIndex
 
-    is_period = getattr(values, 'inferred_type', None) == 'period'
+    is_period = com.is_period_arraylike(values)
     values = Series(values).values
     is_category = com.is_categorical_dtype(values.dtype)
 
@@ -208,13 +213,16 @@ def value_counts(values, sort=True, ascending=False, normalize=False,
             raise TypeError("bins argument only works with numeric data.")
         values = cat.codes
     elif is_category:
-        bins = values.levels
+        bins = values.categories
         cat = values
         values = cat.codes
 
     dtype = values.dtype
 
     if issubclass(values.dtype.type, (np.datetime64, np.timedelta64)) or is_period:
+        if is_period:
+            values = PeriodIndex(values)
+
         values = values.view(np.int64)
         keys, counts = htable.value_count_int64(values)
 
@@ -240,11 +248,11 @@ def value_counts(values, sort=True, ascending=False, normalize=False,
     result = Series(counts, index=com._values_from_object(keys))
     if bins is not None:
         # TODO: This next line should be more efficient
-        result = result.reindex(np.arange(len(cat.levels)), fill_value=0)
+        result = result.reindex(np.arange(len(cat.categories)), fill_value=0)
         if not is_category:
             result.index = bins[:-1]
         else:
-            result.index = cat.levels
+            result.index = cat.categories
 
     if sort:
         result.sort()
@@ -397,7 +405,8 @@ def _get_data_algo(values, func_map):
     if com.is_float_dtype(values):
         f = func_map['float64']
         values = com._ensure_float64(values)
-    elif com.is_datetime64_dtype(values):
+
+    elif com.needs_i8_conversion(values):
 
         # if we have NaT, punt to object dtype
         mask = com.isnull(values)

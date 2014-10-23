@@ -32,7 +32,8 @@ import pandas.core.common as com
 import pandas.core.format as fmt
 import pandas.core.datetools as datetools
 from pandas import (DataFrame, Index, Series, notnull, isnull,
-                    MultiIndex, DatetimeIndex, Timestamp, date_range, read_csv,
+                    MultiIndex, DatetimeIndex, Timestamp, date_range,
+                    read_csv, timedelta_range, Timedelta,
                     option_context)
 import pandas as pd
 from pandas.parser import CParserError
@@ -222,6 +223,134 @@ class CheckIndexing(object):
         result = self.frame['tuples']
         expected = Series(tuples, index=self.frame.index)
         assert_series_equal(result, expected)
+
+    def test_setitem_mulit_index(self):
+        # GH7655, test that assigning to a sub-frame of a frame
+        # with multi-index columns aligns both rows and columns
+        it = ['jim', 'joe', 'jolie'], ['first', 'last'], \
+             ['left', 'center', 'right']
+
+        cols = MultiIndex.from_product(it)
+        index = pd.date_range('20141006',periods=20)
+        vals = np.random.randint(1, 1000, (len(index), len(cols)))
+        df = pd.DataFrame(vals, columns=cols, index=index)
+
+        i, j = df.index.values.copy(), it[-1][:]
+
+        np.random.shuffle(i)
+        df['jim'] = df['jolie'].loc[i, ::-1]
+        assert_frame_equal(df['jim'], df['jolie'])
+
+        np.random.shuffle(j)
+        df[('joe', 'first')] = df[('jolie', 'last')].loc[i, j]
+        assert_frame_equal(df[('joe', 'first')], df[('jolie', 'last')])
+
+        np.random.shuffle(j)
+        df[('joe', 'last')] = df[('jolie', 'first')].loc[i, j]
+        assert_frame_equal(df[('joe', 'last')], df[('jolie', 'first')])
+
+    def test_inplace_ops_alignment(self):
+
+        # inplace ops / ops alignment
+        # GH 8511
+
+        columns = list('abcdefg')
+        X_orig = DataFrame(np.arange(10*len(columns)).reshape(-1,len(columns)), columns=columns, index=range(10))
+        Z = 100*X_orig.iloc[:,1:-1].copy()
+        block1 = list('bedcf')
+        subs = list('bcdef')
+
+        # add
+        X = X_orig.copy()
+        result1 = (X[block1] + Z).reindex(columns=subs)
+
+        X[block1] += Z
+        result2 = X.reindex(columns=subs)
+
+        X = X_orig.copy()
+        result3 = (X[block1] + Z[block1]).reindex(columns=subs)
+
+        X[block1] += Z[block1]
+        result4 = X.reindex(columns=subs)
+
+        assert_frame_equal(result1, result2)
+        assert_frame_equal(result1, result3)
+        assert_frame_equal(result1, result4)
+
+        # sub
+        X = X_orig.copy()
+        result1 = (X[block1] - Z).reindex(columns=subs)
+
+        X[block1] -= Z
+        result2 = X.reindex(columns=subs)
+
+        X = X_orig.copy()
+        result3 = (X[block1] - Z[block1]).reindex(columns=subs)
+
+        X[block1] -= Z[block1]
+        result4 = X.reindex(columns=subs)
+
+        assert_frame_equal(result1, result2)
+        assert_frame_equal(result1, result3)
+        assert_frame_equal(result1, result4)
+
+    def test_inplace_ops_identity(self):
+
+        # GH 5104
+        # make sure that we are actually changing the object
+        s_orig = Series([1, 2, 3])
+        df_orig = DataFrame(np.random.randint(0,5,size=10).reshape(-1,5))
+
+        # no dtype change
+        s = s_orig.copy()
+        s2 = s
+        s += 1
+        assert_series_equal(s,s2)
+        assert_series_equal(s_orig+1,s)
+        self.assertIs(s,s2)
+        self.assertIs(s._data,s2._data)
+
+        df = df_orig.copy()
+        df2 = df
+        df += 1
+        assert_frame_equal(df,df2)
+        assert_frame_equal(df_orig+1,df)
+        self.assertIs(df,df2)
+        self.assertIs(df._data,df2._data)
+
+        # dtype change
+        s = s_orig.copy()
+        s2 = s
+        s += 1.5
+        assert_series_equal(s,s2)
+        assert_series_equal(s_orig+1.5,s)
+
+        df = df_orig.copy()
+        df2 = df
+        df += 1.5
+        assert_frame_equal(df,df2)
+        assert_frame_equal(df_orig+1.5,df)
+        self.assertIs(df,df2)
+        self.assertIs(df._data,df2._data)
+
+        # mixed dtype
+        arr = np.random.randint(0,10,size=5)
+        df_orig = DataFrame({'A' : arr.copy(), 'B' : 'foo'})
+        df = df_orig.copy()
+        df2 = df
+        df['A'] += 1
+        expected = DataFrame({'A' : arr.copy()+1, 'B' : 'foo'})
+        assert_frame_equal(df,expected)
+        assert_frame_equal(df2,expected)
+        self.assertIs(df._data,df2._data)
+
+        df = df_orig.copy()
+        df2 = df
+        df['A'] += 1.5
+        expected = DataFrame({'A' : arr.copy()+1.5, 'B' : 'foo'})
+        assert_frame_equal(df,expected)
+        assert_frame_equal(df2,expected)
+        self.assertIs(df._data,df2._data)
 
     def test_getitem_boolean(self):
         # boolean indexing
@@ -532,6 +661,15 @@ class CheckIndexing(object):
         self.assertEqual(self.frame['something'].dtype, np.int64)
         self.frame['something'] = 2.5
         self.assertEqual(self.frame['something'].dtype, np.float64)
+
+        # GH 7704
+        # dtype conversion on setting
+        df = DataFrame(np.random.rand(30, 3), columns=tuple('ABC'))
+        df['event'] = np.nan
+        df.loc[10,'event'] = 'foo'
+        result = df.get_dtype_counts().order()
+        expected = Series({'float64' : 3, 'object' : 1 }).order()
+        assert_series_equal(result, expected)
 
     def test_setitem_boolean_column(self):
         expected = self.frame.copy()
@@ -1395,6 +1533,7 @@ class CheckIndexing(object):
         # key is unaligned with values
         f = self.mixed_frame.copy()
         piece = f.ix[:2, ['A']]
+        piece.index = f.index[-2:]
         key = (slice(-2, None), ['A', 'B'])
         f.ix[key] = piece
         piece['B'] = np.nan
@@ -1789,6 +1928,20 @@ class CheckIndexing(object):
 
         expect = df.iloc[[1, -1], 0]
         tm.assert_series_equal(df.loc[0.2, 'a'], expect)
+
+    def test_setitem_with_sparse_value(self):
+        # GH8131
+        df = pd.DataFrame({'c_1':['a', 'b', 'c'], 'n_1': [1., 2., 3.]})
+        sp_series = pd.Series([0, 0, 1]).to_sparse(fill_value=0)
+        df['new_column'] = sp_series
+        tm.assert_series_equal(df['new_column'], sp_series)
+
+    def test_setitem_with_unaligned_sparse_value(self):
+        df = pd.DataFrame({'c_1':['a', 'b', 'c'], 'n_1': [1., 2., 3.]})
+        sp_series = (pd.Series([0, 0, 1], index=[2, 1, 0])
+                     .to_sparse(fill_value=0))
+        df['new_column'] = sp_series
+        tm.assert_series_equal(df['new_column'], pd.Series([1, 0, 0]))
 
 
 _seriesd = tm.getSeriesData()
@@ -3499,6 +3652,23 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         result = z.ix[['a', 'c', 'a']]
         check(result,expected)
 
+
+    def test_column_dups_indexing2(self):
+
+        # GH 8363
+        # datetime ops with a non-unique index
+        df = DataFrame({'A' : np.arange(5,dtype='int64'),
+                        'B' : np.arange(1,6,dtype='int64')},
+                       index=[2,2,3,3,4])
+        result = df.B-df.A
+        expected = Series(1,index=[2,2,3,3,4])
+        assert_series_equal(result,expected)
+
+        df = DataFrame({'A' : date_range('20130101',periods=5), 'B' : date_range('20130101 09:00:00', periods=5)},index=[2,2,3,3,4])
+        result = df.B-df.A
+        expected = Series(Timedelta('9 hours'),index=[2,2,3,3,4])
+        assert_series_equal(result,expected)
+
     def test_insert_benchmark(self):
         # from the vb_suite/frame_methods/frame_insert_columns
         N = 10
@@ -3612,6 +3782,18 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         df = DataFrame([{'End Date': dt}])
         self.assertEqual(df.iat[0,0],dt)
         assert_series_equal(df.dtypes,Series({'End Date' : np.dtype('object') }))
+
+        # tz-aware (UTC and other tz's)
+        # GH 8411
+        dr = date_range('20130101',periods=3)
+        df = DataFrame({ 'value' : dr})
+        self.assertTrue(df.iat[0,0].tz is None)
+        dr = date_range('20130101',periods=3,tz='UTC')
+        df = DataFrame({ 'value' : dr})
+        self.assertTrue(str(df.iat[0,0].tz) == 'UTC')
+        dr = date_range('20130101',periods=3,tz='US/Eastern')
+        df = DataFrame({ 'value' : dr})
+        self.assertTrue(str(df.iat[0,0].tz) == 'US/Eastern')
 
         # GH 7822
         # preserver an index with a tz on dict construction
@@ -3958,6 +4140,13 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
             for k2, v2 in compat.iteritems(v):
                 self.assertEqual(v2, recons_data[k][k2])
 
+        recons_data = DataFrame(test_data).to_dict("sp")
+
+        expected_split = {'columns': ['A', 'B'], 'index': ['1', '2', '3'],
+                          'data': [[1.0, '1'], [2.0, '2'], [nan, '3']]}
+
+        tm.assert_almost_equal(recons_data, expected_split)
+
         recons_data = DataFrame(test_data).to_dict("r")
 
         expected_records = [{'A': 1.0, 'B': '1'},
@@ -4017,7 +4206,7 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         tm.assert_frame_equal(DataFrame.from_records(arr2), DataFrame(arr2))
 
         # wrong length
-        msg = r'Shape of passed values is \(3,\), indices imply \(3, 1\)'
+        msg = r'Shape of passed values is \(3, 2\), indices imply \(3, 1\)'
         with assertRaisesRegexp(ValueError, msg):
             DataFrame.from_records(arr, index=index[:-1])
 
@@ -4545,7 +4734,7 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
 
     def test_very_wide_info_repr(self):
         df = DataFrame(np.random.randn(10, 20),
-                       columns=[tm.rands(10) for _ in range(20)])
+                       columns=tm.rands_array(10, 20))
         repr(df)
 
     def test_repr_column_name_unicode_truncation_bug(self):
@@ -4711,6 +4900,19 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
 
         df = DataFrame({'a': ['a', None, 'b']})
         assert_frame_equal(df + df, DataFrame({'a': ['aa', np.nan, 'bb']}))
+
+    def test_ops_np_scalar(self):
+        vals, xs = np.random.rand(5, 3), [nan, 7, -23, 2.718, -3.14, np.inf]
+        f = lambda x: DataFrame(x, index=list('ABCDE'),
+                columns=['jim', 'joe', 'jolie'])
+
+        df = f(vals)
+
+        for x in xs:
+            assert_frame_equal(df / np.array(x), f(vals / x))
+            assert_frame_equal(np.array(x) * df, f(vals * x))
+            assert_frame_equal(df + np.array(x), f(vals + x))
+            assert_frame_equal(np.array(x) - df, f(x - vals))
 
     def test_operators_boolean(self):
 
@@ -4880,7 +5082,6 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         self.assertFalse(np.array_equal(res.fillna(0), res2.fillna(0)))
 
     def test_logical_operators(self):
-        import operator
 
         def _check_bin_op(op):
             result = op(df1, df2)
@@ -6415,6 +6616,14 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         df2.to_csv(exp)
         self.assertEqual(res.getvalue(), exp.getvalue())
 
+    def test_to_csv_path_is_none(self):
+        # GH 8215
+        # Make sure we return string for consistency with
+        # Series.to_csv()
+        csv_str = self.frame.to_csv(path=None)
+        self.assertIsInstance(csv_str, str)
+        recons = pd.read_csv(StringIO(csv_str), index_col=0)
+        assert_frame_equal(self.frame, recons)
 
     def test_info(self):
         io = StringIO()
@@ -6472,38 +6681,87 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
 
     def test_info_max_cols(self):
         df = DataFrame(np.random.randn(10, 5))
-        for len_, verbose in [(4, None), (4, False), (9, True)]:
+        for len_, verbose in [(5, None), (5, False), (10, True)]:
         # For verbose always      ^ setting  ^ summarize ^ full output
             with option_context('max_info_columns', 4):
                 buf = StringIO()
                 df.info(buf=buf, verbose=verbose)
                 res = buf.getvalue()
-                self.assertEqual(len(res.split('\n')), len_)
+                self.assertEqual(len(res.strip().split('\n')), len_)
 
-        for len_, verbose in [(9, None), (4, False), (9, True)]:
+        for len_, verbose in [(10, None), (5, False), (10, True)]:
 
             # max_cols no exceeded
             with option_context('max_info_columns', 5):
                 buf = StringIO()
                 df.info(buf=buf, verbose=verbose)
                 res = buf.getvalue()
-                self.assertEqual(len(res.split('\n')), len_)
+                self.assertEqual(len(res.strip().split('\n')), len_)
 
-        for len_, max_cols in [(9, 5), (4, 4)]:
+        for len_, max_cols in [(10, 5), (5, 4)]:
             # setting truncates
             with option_context('max_info_columns', 4):
                 buf = StringIO()
                 df.info(buf=buf, max_cols=max_cols)
                 res = buf.getvalue()
-                self.assertEqual(len(res.split('\n')), len_)
+                self.assertEqual(len(res.strip().split('\n')), len_)
 
             # setting wouldn't truncate
             with option_context('max_info_columns', 5):
                 buf = StringIO()
                 df.info(buf=buf, max_cols=max_cols)
                 res = buf.getvalue()
-                self.assertEqual(len(res.split('\n')), len_)
+                self.assertEqual(len(res.strip().split('\n')), len_)
 
+    def test_info_memory_usage(self):
+        # Ensure memory usage is displayed, when asserted, on the last line
+        dtypes = ['int64', 'float64', 'datetime64[ns]', 'timedelta64[ns]',
+                  'complex128', 'object', 'bool']
+        data = {}
+        n = 10
+        for i, dtype in enumerate(dtypes):
+            data[i] = np.random.randint(2, size=n).astype(dtype)
+        df = DataFrame(data)
+        buf = StringIO()
+        # display memory usage case
+        df.info(buf=buf, memory_usage=True)
+        res = buf.getvalue().splitlines()
+        self.assertTrue("memory usage: " in res[-1])
+        # do not display memory usage cas
+        df.info(buf=buf, memory_usage=False)
+        res = buf.getvalue().splitlines()
+        self.assertTrue("memory usage: " not in res[-1])
+
+        df.info(buf=buf, memory_usage=True)
+        res = buf.getvalue().splitlines()
+        # memory usage is a lower bound, so print it as XYZ+ MB
+        self.assertTrue(re.match(r"memory usage: [^+]+\+", res[-1]))
+
+        df.iloc[:, :5].info(buf=buf, memory_usage=True)
+        res = buf.getvalue().splitlines()
+        # excluded column with object dtype, so estimate is accurate
+        self.assertFalse(re.match(r"memory usage: [^+]+\+", res[-1]))
+
+        df_with_object_index = pd.DataFrame({'a': [1]}, index=['foo'])
+        df_with_object_index.info(buf=buf, memory_usage=True)
+        res = buf.getvalue().splitlines()
+        self.assertTrue(re.match(r"memory usage: [^+]+\+", res[-1]))
+
+        # Test a DataFrame with duplicate columns
+        dtypes = ['int64', 'int64', 'int64', 'float64']
+        data = {}
+        n = 100
+        for i, dtype in enumerate(dtypes):
+            data[i] = np.random.randint(2, size=n).astype(dtype)
+        df = DataFrame(data)
+        df.columns = dtypes
+        # Ensure df size is as expected
+        df_size = df.memory_usage().sum()
+        exp_size = len(dtypes) * n * 8  # cols * rows * bytes
+        self.assertEqual(df_size, exp_size)
+        # Ensure number of cols in memory_usage is the same as df
+        size_df = np.size(df.columns.values)  # index=False; default
+        self.assertEqual(size_df, np.size(df.memory_usage()))
 
     def test_dtypes(self):
         self.mixed_frame['bool'] = self.mixed_frame['A'] > 0
@@ -7138,6 +7396,8 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         # bad input
         self.assertRaises(ValueError, self.frame.dropna, how='foo')
         self.assertRaises(TypeError, self.frame.dropna, how=None)
+        # non-existent column - 8303
+        self.assertRaises(KeyError, self.frame.dropna, subset=['A','X'])
 
     def test_dropna_multiple_axes(self):
         df = DataFrame([[1, np.nan, 2, 3],
@@ -7568,6 +7828,29 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         with assertRaisesRegexp(NotImplementedError, 'column by column'):
             df.fillna(df.max(1), axis=1)
 
+    def test_fillna_dataframe(self):
+        # GH 8377
+        df = DataFrame({'a': [nan, 1, 2, nan, nan],
+                        'b': [1, 2, 3, nan, nan],
+                        'c': [nan, 1, 2, 3, 4]},
+                       index = list('VWXYZ'))
+
+        # df2 may have different index and columns
+        df2 = DataFrame({'a': [nan, 10, 20, 30, 40],
+                         'b': [50, 60, 70, 80, 90],
+                         'foo': ['bar']*5},
+                        index = list('VWXuZ'))
+
+        result = df.fillna(df2)
+
+        # only those columns and indices which are shared get filled
+        expected = DataFrame({'a': [nan, 1, 2, nan, 40],
+                              'b': [1, 2, 3, nan, 90],
+                              'c': [nan, 1, 2, 3, 4]},
+                             index = list('VWXYZ'))
+
+        assert_frame_equal(result, expected)
+
     def test_fillna_columns(self):
         df = DataFrame(np.random.randn(10, 10))
         df.values[:, ::2] = np.nan
@@ -7581,6 +7864,7 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         expected = df.astype(float).fillna(method='ffill', axis=1)
         assert_frame_equal(result, expected)
 
+
     def test_fillna_invalid_method(self):
         with assertRaisesRegexp(ValueError, 'ffil'):
             self.frame.fillna(method='ffil')
@@ -7590,6 +7874,8 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         self.assertRaises(TypeError, self.frame.fillna, [1, 2])
         # tuple
         self.assertRaises(TypeError, self.frame.fillna, (1, 2))
+        # frame with series
+        self.assertRaises(ValueError, self.frame.iloc[:,0].fillna, self.frame)
 
     def test_replace_inplace(self):
         self.tsframe['A'][:5] = nan
@@ -8953,8 +9239,8 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         self.assertTrue(bf.columns.equals(other.columns))
         # test fill value
         join_idx = self.frame.index.join(other.index)
-        diff_a = self.frame.index.diff(join_idx)
-        diff_b = other.index.diff(join_idx)
+        diff_a = self.frame.index.difference(join_idx)
+        diff_b = other.index.difference(join_idx)
         diff_a_vals = af.reindex(diff_a).values
         diff_b_vals = bf.reindex(diff_b).values
         self.assertTrue((diff_a_vals == -1).all())
@@ -8972,8 +9258,8 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
 
         # test fill value
         join_idx = self.frame.index.join(other.index)
-        diff_a = self.frame.index.diff(join_idx)
-        diff_b = other.index.diff(join_idx)
+        diff_a = self.frame.index.difference(join_idx)
+        diff_b = other.index.difference(join_idx)
         diff_a_vals = af.reindex(diff_a).values
         diff_b_vals = bf.reindex(diff_b).values
         self.assertTrue((diff_a_vals == -1).all())
@@ -9494,6 +9780,18 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         assert_series_equal(the_diff['A'],
                             tf['A'] - tf['A'].shift(1))
 
+    def test_diff_timedelta(self):
+        # GH 4533
+        df = DataFrame(dict(time=[Timestamp('20130101 9:01'),
+                                  Timestamp('20130101 9:02')],
+                            value=[1.0,2.0]))
+
+        res = df.diff()
+        exp = DataFrame([[pd.NaT, np.nan],
+                         [Timedelta('00:01:00'), 1]],
+                        columns=['time', 'value'])
+        assert_frame_equal(res, exp)
+
     def test_diff_mixed_dtype(self):
         df = DataFrame(np.random.randn(5, 3))
         df['A'] = np.array([1, 2, 3, 4, 5], dtype=object)
@@ -9609,6 +9907,13 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
                                  [True, False]], dtype=object),
                        columns=['high', 'low'])
         assert_frame_equal(rs, xp)
+
+    def test_shift_empty(self):
+        # Regression test for #8019
+        df = DataFrame({'foo': []})
+        rs = df.shift(-1)
+
+        assert_frame_equal(df, rs)
 
     def test_tshift(self):
         # PeriodIndex
@@ -9995,6 +10300,13 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         expected.columns = cols
         result = df.applymap(str)
         assert_frame_equal(result,expected)
+
+        # datetime/timedelta
+        df['datetime'] = Timestamp('20130101')
+        df['timedelta'] = Timedelta('1 min')
+        result = df.applymap(str)
+        for f in ['datetime','timedelta']:
+            self.assertEquals(result.loc[0,f],str(df.loc[0,f]))
 
     def test_filter(self):
         # items
@@ -11857,6 +12169,17 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
         with tm.assertRaises(ValueError):
             df.T.stack('c1')
 
+    def test_stack_datetime_column_multiIndex(self):
+        # GH 8039
+        t = datetime(2014, 1, 1)
+        df = DataFrame([1, 2, 3, 4], columns=MultiIndex.from_tuples([(t, 'A', 'B')]))
+        result = df.stack()
+
+        eidx = MultiIndex.from_product([(0, 1, 2, 3), ('B',)])
+        ecols = MultiIndex.from_tuples([(t, 'A')])
+        expected = DataFrame([1, 2, 3, 4], index=eidx, columns=ecols)
+        assert_frame_equal(result, expected)
+
     def test_repr_with_mi_nat(self):
         df = DataFrame({'X': [1, 2]},
                        index=[[pd.NaT, pd.Timestamp('20130101')], ['a', 'b']])
@@ -12135,6 +12458,42 @@ class TestDataFrame(tm.TestCase, CheckIndexing,
                             'datetime64[ns]' : 1,
                             'timedelta64[ns]' : 1}).order()
         assert_series_equal(result,expected)
+
+    def test_construction_with_conversions(self):
+
+        # convert from a numpy array of non-ns timedelta64
+        arr = np.array([1,2,3],dtype='timedelta64[s]')
+        s = Series(arr)
+        expected = Series(timedelta_range('00:00:01',periods=3,freq='s'))
+        assert_series_equal(s,expected)
+
+        df = DataFrame(index=range(3))
+        df['A'] = arr
+        expected = DataFrame({'A' : timedelta_range('00:00:01',periods=3,freq='s')},
+                             index=range(3))
+        assert_frame_equal(df,expected)
+
+        # convert from a numpy array of non-ns datetime64
+        #### note that creating a numpy datetime64 is in LOCAL time!!!!
+        #### seems to work for M8[D], but not for M8[s]
+
+        s = Series(np.array(['2013-01-01','2013-01-02','2013-01-03'],dtype='datetime64[D]'))
+        assert_series_equal(s,Series(date_range('20130101',periods=3,freq='D')))
+        #s = Series(np.array(['2013-01-01 00:00:01','2013-01-01 00:00:02','2013-01-01 00:00:03'],dtype='datetime64[s]'))
+        #assert_series_equal(s,date_range('20130101 00:00:01',period=3,freq='s'))
+
+        expected = DataFrame({
+            'dt1' : Timestamp('20130101'),
+            'dt2' : date_range('20130101',periods=3),
+            #'dt3' : date_range('20130101 00:00:01',periods=3,freq='s'),
+            },index=range(3))
+
+
+        df = DataFrame(index=range(3))
+        df['dt1'] = np.datetime64('2013-01-01')
+        df['dt2'] = np.array(['2013-01-01','2013-01-02','2013-01-03'],dtype='datetime64[D]')
+        #df['dt3'] = np.array(['2013-01-01 00:00:01','2013-01-01 00:00:02','2013-01-01 00:00:03'],dtype='datetime64[s]')
+        assert_frame_equal(df, expected)
 
     def test_constructor_frame_copy(self):
         cop = DataFrame(self.frame, copy=True)
@@ -12635,8 +12994,8 @@ starting,ending,measure
         df.starting = ser_starting.index
         df.ending = ser_ending.index
 
-        assert_array_equal(df.starting.values, ser_starting.index.values)
-        assert_array_equal(df.ending.values, ser_ending.index.values)
+        tm.assert_index_equal(pd.DatetimeIndex(df.starting), ser_starting.index)
+        tm.assert_index_equal(pd.DatetimeIndex(df.ending), ser_ending.index)
 
     def _check_bool_op(self, name, alternative, frame=None, has_skipna=True,
                        has_bool_only=False):

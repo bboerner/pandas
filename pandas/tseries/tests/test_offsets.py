@@ -1,3 +1,4 @@
+import os
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from pandas.compat import range
@@ -22,6 +23,7 @@ from pandas.tseries.index import _to_m8, DatetimeIndex, _daterange_cache, date_r
 from pandas.tseries.tools import parse_time_string
 import pandas.tseries.offsets as offsets
 
+from pandas.io.pickle import read_pickle
 from pandas.tslib import NaT, Timestamp
 import pandas.tslib as tslib
 from pandas.util.testing import assertRaisesRegexp
@@ -848,6 +850,24 @@ class TestCustomBusinessDay(Base):
         dt = datetime(2014, 1, 17)
         assertEq(CDay(calendar=calendar), dt, datetime(2014, 1, 21))
 
+    def test_roundtrip_pickle(self):
+        def _check_roundtrip(obj):
+            unpickled = self.round_trip_pickle(obj)
+            self.assertEqual(unpickled, obj)
+        _check_roundtrip(self.offset)
+        _check_roundtrip(self.offset2)
+        _check_roundtrip(self.offset*2)
+
+    def test_pickle_compat_0_14_1(self):
+        hdays = [datetime(2013,1,1) for ele in range(4)]
+
+        pth = tm.get_data_path()
+
+        cday0_14_1 = read_pickle(os.path.join(pth, 'cday-0.14.1.pickle'))
+        cday = CDay(holidays=hdays)
+        self.assertEqual(cday, cday0_14_1)
+
+
 class CustomBusinessMonthBase(object):
     _multiprocess_can_split_ = True
 
@@ -893,6 +913,15 @@ class CustomBusinessMonthBase(object):
         offset1 = self._object()
         offset2 = self._object()
         self.assertFalse(offset1 != offset2)
+
+    def test_roundtrip_pickle(self):
+        def _check_roundtrip(obj):
+            unpickled = self.round_trip_pickle(obj)
+            self.assertEqual(unpickled, obj)
+        _check_roundtrip(self._object())
+        _check_roundtrip(self._object(2))
+        _check_roundtrip(self._object()*2)
+
 
 class TestCustomBusinessMonthEnd(CustomBusinessMonthBase, Base):
     _object = CBMonthEnd
@@ -1006,8 +1035,12 @@ class TestCustomBusinessMonthEnd(CustomBusinessMonthBase, Base):
 
     def test_datetimeindex(self):
         from pandas.tseries.holiday import USFederalHolidayCalendar
-        self.assertEqual(DatetimeIndex(start='20120101',end='20130101',freq=CBMonthEnd(calendar=USFederalHolidayCalendar())).tolist()[0],
-        datetime(2012,1,31))
+        hcal = USFederalHolidayCalendar()
+        freq = CBMonthEnd(calendar=hcal)
+
+        self.assertEqual(DatetimeIndex(start='20120101',end='20130101',
+                                       freq=freq).tolist()[0],
+                         datetime(2012,1,31))
 
 class TestCustomBusinessMonthBegin(CustomBusinessMonthBase, Base):
     _object = CBMonthBegin
@@ -1120,8 +1153,11 @@ class TestCustomBusinessMonthBegin(CustomBusinessMonthBase, Base):
         self.assertEqual(dt + 2*bm_offset,datetime(2012,2,3))
 
     def test_datetimeindex(self):
-        self.assertEqual(DatetimeIndex(start='20120101',end='20130101',freq=CBMonthBegin(calendar=USFederalHolidayCalendar())).tolist()[0],
-        datetime(2012,1,3))
+        hcal = USFederalHolidayCalendar()
+        cbmb = CBMonthBegin(calendar=hcal)
+        self.assertEqual(DatetimeIndex(start='20120101', end='20130101',
+                                       freq=cbmb).tolist()[0],
+                         datetime(2012,1,3))
 
 
 def assertOnOffset(offset, date, expected):
@@ -3102,6 +3138,134 @@ class TestReprNames(tm.TestCase):
             offset = get_offset(name)
             self.assertEqual(repr(offset), name)
             self.assertEqual(str(offset), name)
+
+
+def get_utc_offset_hours(ts):
+    # take a Timestamp and compute total hours of utc offset
+    o = ts.utcoffset()
+    return (o.days * 24 * 3600 + o.seconds) / 3600.0
+
+
+class TestDST(tm.TestCase):
+    """
+    test DateOffset additions over Daylight Savings Time
+    """
+    # one microsecond before the DST transition
+    ts_pre_fallback = "2013-11-03 01:59:59.999999"
+    ts_pre_springfwd = "2013-03-10 01:59:59.999999"
+
+    # test both basic names and dateutil timezones
+    timezone_utc_offsets = {
+        'US/Eastern': dict(
+            utc_offset_daylight=-4,
+            utc_offset_standard=-5,
+            ),
+        'dateutil/US/Pacific': dict(
+            utc_offset_daylight=-7,
+            utc_offset_standard=-8,
+            )
+        }
+    valid_date_offsets_singular = [
+        'weekday', 'day', 'hour', 'minute', 'second', 'microsecond'
+        ]
+    valid_date_offsets_plural = [
+        'weeks', 'days',
+        'hours', 'minutes', 'seconds',
+        'milliseconds', 'microseconds'
+        ]
+
+    def _test_all_offsets(self, n, **kwds):
+        valid_offsets = self.valid_date_offsets_plural if n > 1 \
+            else self.valid_date_offsets_singular
+
+        for name in valid_offsets:
+            self._test_offset(offset_name=name, offset_n=n, **kwds)
+
+    def _test_offset(self, offset_name, offset_n, tstart, expected_utc_offset):
+        offset = DateOffset(**{offset_name: offset_n})
+        t = tstart + offset
+        if expected_utc_offset is not None:
+            self.assertTrue(get_utc_offset_hours(t) == expected_utc_offset)
+
+        if offset_name == 'weeks':
+            # dates should match
+            self.assertTrue(
+                t.date() ==
+                timedelta(days=7 * offset.kwds['weeks']) + tstart.date()
+                )
+            # expect the same day of week, hour of day, minute, second, ...
+            self.assertTrue(
+                t.dayofweek == tstart.dayofweek and
+                t.hour == tstart.hour and
+                t.minute == tstart.minute and
+                t.second == tstart.second
+                )
+        elif offset_name == 'days':
+            # dates should match
+            self.assertTrue(timedelta(offset.kwds['days']) + tstart.date() == t.date())
+            # expect the same hour of day, minute, second, ...
+            self.assertTrue(
+                t.hour == tstart.hour and
+                t.minute == tstart.minute and
+                t.second == tstart.second
+                )
+        elif offset_name in self.valid_date_offsets_singular:
+            # expect the signular offset value to match between tstart and t
+            datepart_offset = getattr(t, offset_name if offset_name != 'weekday' else 'dayofweek')
+            self.assertTrue(datepart_offset == offset.kwds[offset_name])
+        else:
+            # the offset should be the same as if it was done in UTC
+            self.assertTrue(
+                t == (tstart.tz_convert('UTC') + offset).tz_convert('US/Pacific')
+                )
+
+    def _make_timestamp(self, string, hrs_offset, tz):
+        offset_string = '{hrs:02d}00'.format(hrs=hrs_offset) if hrs_offset >= 0 else \
+            '-{hrs:02d}00'.format(hrs=-1 * hrs_offset)
+        return Timestamp(string + offset_string).tz_convert(tz)
+
+    def test_fallback_plural(self):
+        """test moving from daylight savings to standard time"""
+        for tz, utc_offsets in self.timezone_utc_offsets.items():
+            hrs_pre = utc_offsets['utc_offset_daylight']
+            hrs_post = utc_offsets['utc_offset_standard']
+            self._test_all_offsets(
+                n=3,
+                tstart=self._make_timestamp(self.ts_pre_fallback, hrs_pre, tz),
+                expected_utc_offset=hrs_post
+                )
+
+    def test_springforward_plural(self):
+        """test moving from standard to daylight savings"""
+        for tz, utc_offsets in self.timezone_utc_offsets.items():
+            hrs_pre = utc_offsets['utc_offset_standard']
+            hrs_post = utc_offsets['utc_offset_daylight']
+            self._test_all_offsets(
+                n=3,
+                tstart=self._make_timestamp(self.ts_pre_springfwd, hrs_pre, tz),
+                expected_utc_offset=hrs_post
+                )
+
+    def test_fallback_singular(self):
+        # in the case of signular offsets, we dont neccesarily know which utc offset
+        # the new Timestamp will wind up in (the tz for 1 month may be different from 1 second)
+        # so we don't specify an expected_utc_offset
+        for tz, utc_offsets in self.timezone_utc_offsets.items():
+            hrs_pre = utc_offsets['utc_offset_standard']
+            self._test_all_offsets(
+                n=1,
+                tstart=self._make_timestamp(self.ts_pre_fallback, hrs_pre, tz),
+                expected_utc_offset=None
+                )
+
+    def test_springforward_singular(self):
+        for tz, utc_offsets in self.timezone_utc_offsets.items():
+            hrs_pre = utc_offsets['utc_offset_standard']
+            self._test_all_offsets(
+                n=1,
+                tstart=self._make_timestamp(self.ts_pre_springfwd, hrs_pre, tz),
+                expected_utc_offset=None
+                )
 
 
 if __name__ == '__main__':

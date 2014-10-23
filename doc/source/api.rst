@@ -146,8 +146,8 @@ Top-level missing data
    isnull
    notnull
 
-Top-level dealing with datetimes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Top-level dealing with datetimelike
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autosummary::
    :toctree: generated/
@@ -157,6 +157,7 @@ Top-level dealing with datetimes
    date_range
    bdate_range
    period_range
+   timedelta_range
 
 Top-level evaluation
 ~~~~~~~~~~~~~~~~~~~~
@@ -414,6 +415,7 @@ Reshaping, sorting
    Series.sortlevel
    Series.swaplevel
    Series.unstack
+   Series.searchsorted
 
 Combining / joining / merging
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -440,12 +442,15 @@ Time series-related
 
 Datetimelike Properties
 ~~~~~~~~~~~~~~~~~~~~~~~
+
 ``Series.dt`` can be used to access the values of the series as
 datetimelike and return several properties.
 Due to implementation details the methods show up here as methods of the
-``DatetimeProperties/PeriodProperties`` classes. These can be accessed like ``Series.dt.<property>``.
+``DatetimeProperties/PeriodProperties/TimedeltaProperties`` classes. These can be accessed like ``Series.dt.<property>``.
 
 .. currentmodule:: pandas.tseries.common
+
+**Datetime Properties**
 
 .. autosummary::
    :toctree: generated/
@@ -472,6 +477,37 @@ Due to implementation details the methods show up here as methods of the
    DatetimeProperties.is_quarter_end
    DatetimeProperties.is_year_start
    DatetimeProperties.is_year_end
+
+**Datetime Methods**
+
+.. autosummary::
+   :toctree: generated/
+
+   DatetimeProperties.to_period
+   DatetimeProperties.to_pydatetime
+   DatetimeProperties.tz_localize
+   DatetimeProperties.tz_convert
+
+**Timedelta Properties**
+
+.. autosummary::
+   :toctree: generated/
+
+   TimedeltaProperties.days
+   TimedeltaProperties.hours
+   TimedeltaProperties.minutes
+   TimedeltaProperties.seconds
+   TimedeltaProperties.milliseconds
+   TimedeltaProperties.microseconds
+   TimedeltaProperties.nanoseconds
+   TimedeltaProperties.components
+
+**Timedelta Methods**
+
+.. autosummary::
+   :toctree: generated/
+
+   TimedeltaProperties.to_pytimedelta
 
 String handling
 ~~~~~~~~~~~~~~~
@@ -520,25 +556,33 @@ Categorical
 
 .. currentmodule:: pandas.core.categorical
 
-If the Series is of dtype ``category``, ``Series.cat`` can be used to access the the underlying
-``Categorical``. This data type is similar to the otherwise underlying numpy array
-and has the following usable methods and properties (all available as
-``Series.cat.<method_or_property>``).
+If the Series is of dtype ``category``, ``Series.cat`` can be used to change the the categorical
+data. This accessor is similar to the ``Series.dt`` or ``Series.str`` and has the
+following usable methods and properties (all available as ``Series.cat.<method_or_property>``).
 
+.. autosummary::
+   :toctree: generated/
+
+   Categorical.categories
+   Categorical.ordered
+   Categorical.rename_categories
+   Categorical.reorder_categories
+   Categorical.add_categories
+   Categorical.remove_categories
+   Categorical.remove_unused_categories
+   Categorical.set_categories
+   Categorical.codes
+
+To create a Series of dtype ``category``, use ``cat = s.astype("category")``.
+
+The following two ``Categorical`` constructors are considered API but should only be used when
+adding ordering information or special categories is need at creation time of the categorical data:
 
 .. autosummary::
    :toctree: generated/
 
    Categorical
    Categorical.from_codes
-   Categorical.levels
-   Categorical.ordered
-   Categorical.reorder_levels
-   Categorical.remove_unused_levels
-   Categorical.min
-   Categorical.max
-   Categorical.mode
-   Categorical.describe
 
 ``np.asarray(categorical)`` works by implementing the array interface. Be aware, that this converts
 the Categorical back to a numpy array, so levels and order information is not preserved!
@@ -547,25 +591,6 @@ the Categorical back to a numpy array, so levels and order information is not pr
    :toctree: generated/
 
    Categorical.__array__
-
-To create compatibility with `pandas.Series` and `numpy` arrays, the following (non-API) methods
-are also introduced.
-
-.. autosummary::
-   :toctree: generated/
-
-   Categorical.from_array
-   Categorical.get_values
-   Categorical.copy
-   Categorical.dtype
-   Categorical.ndim
-   Categorical.sort
-   Categorical.equals
-   Categorical.unique
-   Categorical.order
-   Categorical.argsort
-   Categorical.fillna
-
 
 Plotting
 ~~~~~~~~
@@ -794,7 +819,6 @@ Reshaping, sorting, transposing
 .. autosummary::
    :toctree: generated/
 
-   DataFrame.delevel
    DataFrame.pivot
    DataFrame.reorder_levels
    DataFrame.sort
@@ -1307,6 +1331,37 @@ Conversion
    DatetimeIndex.to_pydatetime
    DatetimeIndex.to_series
 
+TimedeltaIndex
+--------------
+
+.. autosummary::
+   :toctree: generated/
+
+   TimedeltaIndex
+
+Components
+~~~~~~~~~~
+
+.. autosummary::
+   :toctree: generated/
+
+   TimedeltaIndex.days
+   TimedeltaIndex.hours
+   TimedeltaIndex.minutes
+   TimedeltaIndex.seconds
+   TimedeltaIndex.milliseconds
+   TimedeltaIndex.microseconds
+   TimedeltaIndex.nanoseconds
+   TimedeltaIndex.components
+
+Conversion
+~~~~~~~~~~
+.. autosummary::
+   :toctree: generated/
+
+   TimedeltaIndex.to_pytimedelta
+   TimedeltaIndex.to_series
+
 GroupBy
 -------
 .. currentmodule:: pandas.core.groupby
@@ -1346,12 +1401,80 @@ Computations / Descriptive Stats
 .. autosummary::
    :toctree: generated/
 
+   GroupBy.count
+   GroupBy.cumcount
+   GroupBy.first
+   GroupBy.head
+   GroupBy.last
+   GroupBy.max
    GroupBy.mean
    GroupBy.median
+   GroupBy.min
+   GroupBy.nth
+   GroupBy.ohlc
+   GroupBy.prod
+   GroupBy.size
    GroupBy.sem
    GroupBy.std
+   GroupBy.sum
    GroupBy.var
-   GroupBy.ohlc
+   GroupBy.tail
+
+The following methods are available in both ``SeriesGroupBy`` and
+``DataFrameGroupBy`` objects, but may differ slightly, usually in that
+the ``DataFrameGroupBy`` version usually permits the specification of an
+axis argument, and often an argument indicating whether to restrict
+application to columns of a specific data type.
+
+.. autosummary::
+   :toctree: generated/
+
+   DataFrameGroupBy.bfill
+   DataFrameGroupBy.cummax
+   DataFrameGroupBy.cummin
+   DataFrameGroupBy.cumprod
+   DataFrameGroupBy.cumsum
+   DataFrameGroupBy.describe
+   DataFrameGroupBy.all
+   DataFrameGroupBy.any
+   DataFrameGroupBy.corr
+   DataFrameGroupBy.cov
+   DataFrameGroupBy.diff
+   DataFrameGroupBy.ffill
+   DataFrameGroupBy.fillna
+   DataFrameGroupBy.hist
+   DataFrameGroupBy.idxmax
+   DataFrameGroupBy.idxmin
+   DataFrameGroupBy.irow
+   DataFrameGroupBy.mad
+   DataFrameGroupBy.pct_change
+   DataFrameGroupBy.plot
+   DataFrameGroupBy.quantile
+   DataFrameGroupBy.rank
+   DataFrameGroupBy.resample
+   DataFrameGroupBy.shift
+   DataFrameGroupBy.skew
+   DataFrameGroupBy.take
+   DataFrameGroupBy.tshift
+
+The following methods are available only for ``SeriesGroupBy`` objects.
+
+.. autosummary::
+   :toctree: generated/
+
+   SeriesGroupBy.nlargest
+   SeriesGroupBy.nsmallest
+   SeriesGroupBy.nunique
+   SeriesGroupBy.unique
+   SeriesGroupBy.value_counts
+
+The following methods are available only for ``DataFrameGroupBy`` objects.
+
+.. autosummary::
+   :toctree: generated/
+
+   DataFrameGroupBy.corrwith
+   DataFrameGroupBy.boxplot
 
 .. currentmodule:: pandas
 

@@ -332,6 +332,16 @@ def read_hdf(path_or_buf, key, **kwargs):
         key, auto_close=auto_close, **kwargs)
 
     if isinstance(path_or_buf, string_types):
+        
+        try:
+            exists = os.path.exists(path_or_buf)
+
+        #if filepath is too long
+        except (TypeError,ValueError):
+            exists = False
+
+        if not exists:
+            raise IOError('File %s does not exist' % path_or_buf)
 
         # can't auto open/close if we are using an iterator
         # so delegate to the iterator
@@ -398,8 +408,8 @@ class HDFStore(StringMixin):
                  fletcher32=False, **kwargs):
         try:
             import tables
-        except ImportError:  # pragma: no cover
-            raise ImportError('HDFStore requires PyTables')
+        except ImportError as ex:  # pragma: no cover
+            raise ImportError('HDFStore requires PyTables, "{ex}" problem importing'.format(ex=str(ex)))
 
         self._path = path
         if mode is None:
@@ -970,7 +980,7 @@ class HDFStore(StringMixin):
                 remain_values.extend(v)
         if remain_key is not None:
             ordered = value.axes[axis]
-            ordd = ordered - Index(remain_values)
+            ordd = ordered.difference(Index(remain_values))
             ordd = sorted(ordered.get_indexer(ordd))
             d[remain_key] = ordered.take(ordd)
 
@@ -3245,7 +3255,7 @@ class Table(Fixed):
                 data_columns, min_itemsize)
             if len(data_columns):
                 mgr = block_obj.reindex_axis(
-                    Index(axis_labels) - Index(data_columns),
+                    Index(axis_labels).difference(Index(data_columns)),
                     axis=axis
                 )._data
 
@@ -3362,7 +3372,7 @@ class Table(Fixed):
                             # if we have a multi-index, then need to include
                             # the levels
                             if self.is_multi_index:
-                                filt = filt + Index(self.levels)
+                                filt = filt.union(Index(self.levels))
 
                             takers = op(axis_values, filt)
                             return obj.ix._getitem_axis(takers,
@@ -3522,8 +3532,8 @@ class LegacyTable(Table):
             return None
 
         factors = [Categorical.from_array(a.values) for a in self.index_axes]
-        levels = [f.levels for f in factors]
-        N = [len(f.levels) for f in factors]
+        levels = [f.categories for f in factors]
+        N = [len(f.categories) for f in factors]
         labels = [f.codes for f in factors]
 
         # compute the key

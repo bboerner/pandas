@@ -1,12 +1,13 @@
 # pylint: disable-msg=W0612,E1101,W0141
 import datetime
+import itertools
 import nose
 
 from numpy.random import randn
 import numpy as np
 
 from pandas.core.index import Index, MultiIndex
-from pandas import Panel, DataFrame, Series, notnull, isnull
+from pandas import Panel, DataFrame, Series, notnull, isnull, Timestamp
 
 from pandas.util.testing import (assert_almost_equal,
                                  assert_series_equal,
@@ -212,6 +213,44 @@ class TestMultiLevel(tm.TestCase):
     def test_sort_index_preserve_levels(self):
         result = self.frame.sort_index()
         self.assertEqual(result.index.names, self.frame.index.names)
+
+    def test_sorting_repr_8017(self):
+
+        np.random.seed(0)
+        data = np.random.randn(3,4)
+
+        for gen, extra in [([1.,3.,2.,5.],4.),
+                           ([1,3,2,5],4),
+                           ([Timestamp('20130101'),Timestamp('20130103'),Timestamp('20130102'),Timestamp('20130105')],Timestamp('20130104')),
+                           (['1one','3one','2one','5one'],'4one')]:
+            columns = MultiIndex.from_tuples([('red', i) for i in gen])
+            df = DataFrame(data, index=list('def'), columns=columns)
+            df2 = pd.concat([df,DataFrame('world',
+                                          index=list('def'),
+                                          columns=MultiIndex.from_tuples([('red', extra)]))],axis=1)
+
+            # check that the repr is good
+            # make sure that we have a correct sparsified repr
+            # e.g. only 1 header of read
+            self.assertEqual(str(df2).splitlines()[0].split(),['red'])
+
+            # GH 8017
+            # sorting fails after columns added
+
+            # construct single-dtype then sort
+            result = df.copy().sort_index(axis=1)
+            expected = df.iloc[:,[0,2,1,3]]
+            assert_frame_equal(result, expected)
+
+            result = df2.sort_index(axis=1)
+            expected = df2.iloc[:,[0,2,1,4,3]]
+            assert_frame_equal(result, expected)
+
+            # setitem then sort
+            result = df.copy()
+            result[('red',extra)] = 'world'
+            result = result.sort_index(axis=1)
+            assert_frame_equal(result, expected)
 
     def test_repr_to_string(self):
         repr(self.frame)
@@ -2065,6 +2104,17 @@ Thur,Lunch,Yes,51.51,17"""
 
         self.assertTrue(idx.levels[0].equals(expected1))
         self.assertTrue(idx.levels[1].equals(idx2))
+
+        # from datetime combos
+        # GH 7888
+        date1 = datetime.date.today()
+        date2 = datetime.datetime.today()
+        date3 = Timestamp.today()
+
+        for d1, d2 in itertools.product([date1,date2,date3],[date1,date2,date3]):
+            index = pd.MultiIndex.from_product([[d1],[d2]])
+            self.assertIsInstance(index.levels[0],pd.DatetimeIndex)
+            self.assertIsInstance(index.levels[1],pd.DatetimeIndex)
 
     def test_set_index_datetime(self):
         # GH 3950

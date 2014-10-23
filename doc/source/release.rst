@@ -45,21 +45,129 @@ analysis / manipulation tool available in any language.
 * Binary installers on PyPI: http://pypi.python.org/pypi/pandas
 * Documentation: http://pandas.pydata.org
 
+pandas 0.15.1
+-------------
+
+**Release date:** (November ??, 2014)
+
+This is a minor release from 0.15.0 and includes a small number of API changes, several new features, enhancements, and
+performance improvements along with a large number of bug fixes.
+
+Highlights include:
+
+See the :ref:`v0.15.1 Whatsnew <whatsnew_0151>` overview or the issue tracker on GitHub for an extensive list
+of all API changes, enhancements and bugs that have been fixed in 0.15.1.
+
+Thanks
+~~~~~~
+
 pandas 0.15.0
 -------------
 
-**Release date:** (???)
+**Release date:** (October 18, 2014)
 
 This is a major release from 0.14.1 and includes a number of API changes, several new features, enhancements, and
 performance improvements along with a large number of bug fixes.
 
 Highlights include:
 
-See the :ref:`v0.15.0 Whatsnew <whatsnew_0140>` overview or the issue tracker on GitHub for an extensive list
+- Drop support for numpy < 1.7.0 (:issue:`7711`)
+- The ``Categorical`` type was integrated as a first-class pandas type, see :ref:`here <whatsnew_0150.cat>`
+- New scalar type ``Timedelta``, and a new index type ``TimedeltaIndex``, see :ref:`here <whatsnew_0150.timedeltaindex>`
+- New DataFrame default display for ``df.info()`` to include memory usage, see :ref:`Memory Usage <whatsnew_0150.memory>`
+- New datetimelike properties accessor ``.dt`` for Series, see :ref:`Datetimelike Properties <whatsnew_0150.dt>`
+- Split indexing documentation into :ref:`Indexing and Selecting Data <indexing>` and :ref:`MultiIndex / Advanced Indexing <advanced>`
+- Split out string methods documentation into :ref:`Working with Text Data <text>`
+- ``read_csv`` will now by default ignore blank lines when parsing, see :ref:`here <whatsnew_0150.blanklines>`
+- API change in using Indexes in set operations, see :ref:`here <whatsnew_0150.index_set_ops>`
+- Internal refactoring of the ``Index`` class to no longer sub-class ``ndarray``, see :ref:`Internal Refactoring <whatsnew_0150.refactoring>`
+- dropping support for ``PyTables`` less than version 3.0.0, and ``numexpr`` less than version 2.1 (:issue:`7990`)
+
+See the :ref:`v0.15.0 Whatsnew <whatsnew_0150>` overview or the issue tracker on GitHub for an extensive list
 of all API changes, enhancements and bugs that have been fixed in 0.15.0.
 
 Thanks
 ~~~~~~
+
+- Aaron Schumacher
+- Adam Greenhall
+- Andy Hayden
+- Anthony O'Brien
+- Artemy Kolchinsky
+- behzad nouri
+- Benedikt Sauer
+- benjamin
+- Benjamin Thyreau
+- Ben Schiller
+- bjonen
+- BorisVerk
+- Chris Reynolds
+- Chris Stoafer
+- Dav Clark
+- dlovell
+- DSM
+- dsm054
+- FragLegs
+- German Gomez-Herrero
+- Hsiaoming Yang
+- Huan Li
+- hunterowens
+- Hyungtae Kim
+- immerrr
+- Isaac Slavitt
+- ischwabacher
+- Jacob Schaer
+- Jacob Wasserman
+- Jan Schulz
+- Jeff Tratner
+- Jesse Farnham
+- jmorris0x0
+- jnmclarty
+- Joe Bradish
+- Joerg Rittinger
+- John W. O'Brien
+- Joris Van den Bossche
+- jreback
+- Kevin Sheppard
+- klonuo
+- Kyle Meyer
+- lexual
+- Max Chang
+- mcjcode
+- Michael Mueller
+- Michael W Schatzow
+- Mike Kelly
+- Mortada Mehyar
+- mtrbean
+- Nathan Sanders
+- Nathan Typanski
+- onesandzeroes
+- Paul Masurel
+- Phillip Cloud
+- Pietro Battiston
+- RenzoBertocchi
+- rockg
+- Ross Petchler
+- seth-p
+- Shahul Hameed
+- Shashank Agarwal
+- sinhrks
+- someben
+- stahlous
+- stas-sl
+- Stephan Hoyer
+- thatneat
+- tom-alcorn
+- TomAugspurger
+- Tom Augspurger
+- Tony Lorenzo
+- unknown
+- unutbu
+- Wes Turner
+- Wilfred Hughes
+- Yevgeniy Grechka
+- Yoshiki VÃ¡zquez Baeza
+- zachcp
 
 pandas 0.14.1
 -------------

@@ -105,6 +105,34 @@ pandas objects provide intercompatibility between ``NaT`` and ``NaN``.
    df2
    df2.get_dtype_counts()
 
+.. _missing.inserting:
+
+Inserting missing data
+----------------------
+
+You can insert missing values by simply assigning to containers. The
+actual missing value used will be chosen based on the dtype.
+
+For example, numeric containers will always use ``NaN`` regardless of
+the missing value type chosen:
+
+.. ipython:: python
+
+   s = Series([1, 2, 3])
+   s.loc[0] = None
+   s
+
+Likewise, datetime containers will always use ``NaT``.
+
+For object containers, pandas will use the value given:
+
+.. ipython:: python
+
+   s = Series(["a", "b", "c"])
+   s.loc[0] = None
+   s.loc[1] = np.nan
+   s
+
 
 Calculations with missing data
 ------------------------------
@@ -394,7 +422,7 @@ at the new values.
    ser = Series(np.sort(np.random.uniform(size=100)))
 
    # interpolate at new_index
-   new_index = ser.index + Index([49.25, 49.5, 49.75, 50.25, 50.5, 50.75])
+   new_index = ser.index | Index([49.25, 49.5, 49.75, 50.25, 50.5, 50.75])
    interp_s = ser.reindex(new_index).interpolate(method='pchip')
    interp_s[49:51]
 

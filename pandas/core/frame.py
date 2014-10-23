@@ -26,7 +26,7 @@ import numpy.ma as ma
 from pandas.core.common import (isnull, notnull, PandasError, _try_sort,
                                 _default_index, _maybe_upcast, _is_sequence,
                                 _infer_dtype_from_scalar, _values_from_object,
-                                is_list_like, _get_dtype)
+                                is_list_like, _get_dtype, _maybe_box_datetimelike)
 from pandas.core.generic import NDFrame, _shared_docs
 from pandas.core.index import Index, MultiIndex, _ensure_index
 from pandas.core.indexing import (_maybe_droplevels,
@@ -43,6 +43,7 @@ from numpy import percentile as _quantile
 from pandas.compat import(range, zip, lrange, lmap, lzip, StringIO, u,
                           OrderedDict, raise_with_traceback)
 from pandas import compat
+from pandas.sparse.array import SparseArray
 from pandas.util.decorators import deprecate, Appender, Substitution, \
     deprecate_kwarg
 
@@ -639,19 +640,25 @@ class DataFrame(NDFrame):
 
         return cls(data, index=index, columns=columns, dtype=dtype)
 
-    def to_dict(self, outtype='dict'):
-        """
-        Convert DataFrame to dictionary.
+    @deprecate_kwarg(old_arg_name='outtype', new_arg_name='orient')
+    def to_dict(self, orient='dict'):
+        """Convert DataFrame to dictionary.
 
         Parameters
         ----------
-        outtype : str {'dict', 'list', 'series', 'records'}
-            Determines the type of the values of the dictionary. The
-            default `dict` is a nested dictionary {column -> {index -> value}}.
-            `list` returns {column -> list(values)}. `series` returns
-            {column -> Series(values)}. `records` returns [{columns -> value}].
-            Abbreviations are allowed.
+        orient : str {'dict', 'list', 'series', 'split', 'records'}
+            Determines the type of the values of the dictionary.
 
+            - dict (default) : dict like {column -> {index -> value}}
+            - list : dict like {column -> [values]}
+            - series : dict like {column -> Series(values)}
+            - split : dict like
+              {index -> [index], columns -> [columns], data -> [values]}
+            - records : list like
+              [{column -> value}, ... , {column -> value}]
+
+            Abbreviations are allowed. `s` indicates `series` and `sp`
+            indicates `split`.
 
         Returns
         -------
@@ -660,13 +667,17 @@ class DataFrame(NDFrame):
         if not self.columns.is_unique:
             warnings.warn("DataFrame columns are not unique, some "
                           "columns will be omitted.", UserWarning)
-        if outtype.lower().startswith('d'):
+        if orient.lower().startswith('d'):
             return dict((k, v.to_dict()) for k, v in compat.iteritems(self))
-        elif outtype.lower().startswith('l'):
+        elif orient.lower().startswith('l'):
             return dict((k, v.tolist()) for k, v in compat.iteritems(self))
-        elif outtype.lower().startswith('s'):
+        elif orient.lower().startswith('sp'):
+            return {'index': self.index.tolist(),
+                    'columns': self.columns.tolist(),
+                    'data': self.values.tolist()}
+        elif orient.lower().startswith('s'):
             return dict((k, v) for k, v in compat.iteritems(self))
-        elif outtype.lower().startswith('r'):
+        elif orient.lower().startswith('r'):
             return [dict((k, v) for k, v in zip(self.columns, row))
                     for row in self.values]
         else:  # pragma: no cover
@@ -1389,7 +1400,7 @@ class DataFrame(NDFrame):
         if buf is None:
             return formatter.buf.getvalue()
 
-    def info(self, verbose=None, buf=None, max_cols=None):
+    def info(self, verbose=None, buf=None, max_cols=None, memory_usage=None):
         """
         Concise summary of a DataFrame.
 
@@ -1403,6 +1414,12 @@ class DataFrame(NDFrame):
         max_cols : int, default None
             Determines whether full summary or short summary is printed.
             None follows the `display.max_info_columns` setting.
+        memory_usage : boolean, default None
+            Specifies whether total memory usage of the DataFrame
+            elements (including index) should be displayed. None follows
+            the `display.memory_usage` setting. True or False overrides
+            the `display.memory_usage` setting. Memory usage is shown in
+            human-readable units (base-2 representation).
         """
         from pandas.core.format import _put_lines
 
@@ -1461,6 +1478,14 @@ class DataFrame(NDFrame):
         def _non_verbose_repr():
             lines.append(self.columns.summary(name='Columns'))
 
+        def _sizeof_fmt(num, size_qualifier):
+            # returns size in human readable format
+            for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
+                if num < 1024.0:
+                    return "%3.1f%s %s" % (num, size_qualifier, x)
+                num /= 1024.0
+            return "%3.1f%s %s" % (num, size_qualifier, 'PB')
+
         if verbose:
             _verbose_repr()
         elif verbose is False:  # specifically set to False, not nesc None
@@ -1474,7 +1499,50 @@ class DataFrame(NDFrame):
         counts = self.get_dtype_counts()
         dtypes = ['%s(%d)' % k for k in sorted(compat.iteritems(counts))]
         lines.append('dtypes: %s' % ', '.join(dtypes))
+        if memory_usage is None:
+            memory_usage = get_option('display.memory_usage')
+        if memory_usage:  # append memory usage of df to display
+            # size_qualifier is just a best effort; not guaranteed to catch all
+            # cases (e.g., it misses categorical data even with object
+            # categories)
+            size_qualifier = ('+' if 'object' in counts
+                              or self.index.dtype.kind == 'O' else '')
+            mem_usage = self.memory_usage(index=True).sum()
+            lines.append("memory usage: %s\n" %
+                            _sizeof_fmt(mem_usage, size_qualifier))
         _put_lines(buf, lines)
+
+    def memory_usage(self, index=False):
+        """Memory usage of DataFrame columns.
+
+        Parameters
+        ----------
+        index : bool
+            Specifies whether to include memory usage of DataFrame's
+            index in returned Series. If `index=True` (default is False)
+            the first index of the Series is `Index`.
+
+        Returns
+        -------
+        sizes : Series
+            A series with column names as index and memory usage of
+            columns with units of bytes.
+
+        Notes
+        -----
+        Memory usage does not include memory consumed by elements that
+        are not components of the array.
+
+        See Also
+        --------
+        numpy.ndarray.nbytes
+        """
+        result = Series([ c.values.nbytes for col, c in self.iteritems() ],
+                        index=self.columns)
+        if index:
+             result = Series(self.index.values.nbytes,
+                        index=['Index']).append(result)
+        return result
 
     def transpose(self):
         """Transpose index and columns"""
@@ -1538,7 +1606,7 @@ class DataFrame(NDFrame):
 
         if takeable:
             series = self._iget_item_cache(col)
-            return series.values[index]
+            return _maybe_box_datetimelike(series.values[index])
 
         series = self._get_item_cache(col)
         engine = self.index._engine
@@ -1902,6 +1970,7 @@ class DataFrame(NDFrame):
           this will return *all* object dtype columns
         * See the `numpy dtype hierarchy
           <http://docs.scipy.org/doc/numpy/reference/arrays.scalars.html>`__
+        * To select Pandas categorical dtypes, use 'category'
 
         Examples
         --------
@@ -2141,6 +2210,15 @@ class DataFrame(NDFrame):
             value = reindexer(value)
 
         elif isinstance(value, DataFrame):
+            # align right-hand-side columns if self.columns
+            # is multi-index and self[key] is a sub-frame
+            if isinstance(self.columns, MultiIndex) and key in self.columns:
+                loc = self.columns.get_loc(key)
+                if isinstance(loc, (slice, Series, np.ndarray, Index)):
+                    cols = _maybe_droplevels(self.columns[loc], key)
+                    if len(cols) and not cols.equals(value.columns):
+                        value = value.reindex_axis(cols, axis=1)
+            # now align rows
             value = reindexer(value).T
 
         elif isinstance(value, Categorical):
@@ -2164,8 +2242,8 @@ class DataFrame(NDFrame):
             value = np.repeat(value, len(self.index)).astype(dtype)
             value = com._possibly_cast_to_datetime(value, dtype)
 
-        # return categoricals directly
-        if isinstance(value, Categorical):
+        # return unconsolidatables directly
+        if isinstance(value, (Categorical, SparseArray)):
             return value
 
         # broadcast across multiple columns if necessary
@@ -2258,8 +2336,7 @@ class DataFrame(NDFrame):
     def _reindex_index(self, new_index, method, copy, level, fill_value=NA,
                        limit=None):
         new_index, indexer = self.index.reindex(new_index, method, level,
-                                                limit=limit,
-                                                copy_if_needed=True)
+                                                limit=limit)
         return self._reindex_with_indexers({0: [new_index, indexer]},
                                            copy=copy, fill_value=fill_value,
                                            allow_dups=False)
@@ -2267,8 +2344,7 @@ class DataFrame(NDFrame):
     def _reindex_columns(self, new_columns, copy, level, fill_value=NA,
                          limit=None):
         new_columns, indexer = self.columns.reindex(new_columns, level=level,
-                                                    limit=limit,
-                                                    copy_if_needed=True)
+                                                    limit=limit)
         return self._reindex_with_indexers({1: [new_columns, indexer]},
                                            copy=copy, fill_value=fill_value,
                                            allow_dups=False)
@@ -2509,7 +2585,6 @@ class DataFrame(NDFrame):
         if not inplace:
             return new_obj
 
-    delevel = deprecate('delevel', reset_index)
 
     #----------------------------------------------------------------------
     # Reindex-based selection methods
@@ -2551,7 +2626,11 @@ class DataFrame(NDFrame):
             agg_obj = self
             if subset is not None:
                 ax = self._get_axis(agg_axis)
-                agg_obj = self.take(ax.get_indexer_for(subset),axis=agg_axis)
+                indices = ax.get_indexer_for(subset)
+                check = indices == -1
+                if check.any():
+                    raise KeyError(list(np.compress(check,subset)))
+                agg_obj = self.take(indices,axis=agg_axis)
 
             count = agg_obj.count(axis=agg_axis)
 
@@ -2770,6 +2849,12 @@ class DataFrame(NDFrame):
                                     na_position=na_position)
 
         elif isinstance(labels, MultiIndex):
+
+            # make sure that the axis is lexsorted to start
+            # if not we need to reconstruct to get the correct indexer
+            if not labels.is_lexsorted():
+                labels = MultiIndex.from_tuples(labels.values)
+
             indexer = _lexsort_indexer(labels.labels, orders=ascending,
                                        na_position=na_position)
             indexer = com._ensure_platform_int(indexer)
@@ -3641,8 +3726,9 @@ class DataFrame(NDFrame):
 
         # if we have a dtype == 'M8[ns]', provide boxed values
         def infer(x):
-            if com.is_datetime64_dtype(x):
-                x = lib.map_infer(_values_from_object(x), lib.Timestamp)
+            if com.needs_i8_conversion(x):
+                f = com.i8_boxer(x)
+                x = lib.map_infer(_values_from_object(x), f)
             return lib.map_infer(_values_from_object(x), func)
         return self.apply(infer)
 
@@ -3682,7 +3768,7 @@ class DataFrame(NDFrame):
                                 'ignore_index=True')
 
             index = None if other.name is None else [other.name]
-            combined_columns = self.columns.tolist() + ((self.columns | other.index) - self.columns).tolist()
+            combined_columns = self.columns.tolist() + self.columns.union(other.index).difference(self.columns).tolist()
             other = other.reindex(combined_columns, copy=False)
             other = DataFrame(other.values.reshape((1, len(other))),
                               index=index, columns=combined_columns).convert_objects()

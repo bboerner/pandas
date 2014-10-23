@@ -138,7 +138,7 @@ class TestTimestamp(tm.TestCase):
 
     def test_repr(self):
         dates = ['2014-03-07', '2014-01-01 09:00', '2014-01-01 00:00:00.000000001']
-        timezones = ['UTC', 'Asia/Tokyo', 'US/Eastern', 'dateutil/US/Pacific']
+        timezones = ['UTC', 'Asia/Tokyo', 'US/Eastern', 'dateutil/America/Los_Angeles']
         freqs = ['D', 'M', 'S', 'N']
 
         for date in dates:
@@ -232,6 +232,26 @@ class TestTimestamp(tm.TestCase):
         conv = local.tz_convert('US/Eastern')
         self.assertEqual(conv.nanosecond, 5)
         self.assertEqual(conv.hour, 19)
+        
+    def test_tz_localize_ambiguous(self):
+        
+        ts = Timestamp('2014-11-02 01:00')
+        ts_dst = ts.tz_localize('US/Eastern', ambiguous=True)
+        ts_no_dst = ts.tz_localize('US/Eastern', ambiguous=False)
+        
+        rng = date_range('2014-11-02', periods=3, freq='H', tz='US/Eastern')
+        self.assertEqual(rng[1], ts_dst)
+        self.assertEqual(rng[2], ts_no_dst)
+        self.assertRaises(ValueError, ts.tz_localize, 'US/Eastern', ambiguous='infer')
+
+        # GH 8025
+        with tm.assertRaisesRegexp(TypeError, 'Cannot localize tz-aware Timestamp, use '
+                                   'tz_convert for conversions'):
+            Timestamp('2011-01-01' ,tz='US/Eastern').tz_localize('Asia/Tokyo')
+
+        with tm.assertRaisesRegexp(TypeError, 'Cannot convert tz-naive Timestamp, use '
+                            'tz_localize to localize'):
+            Timestamp('2011-01-01').tz_convert('Asia/Tokyo')
 
     def test_tz_localize_roundtrip(self):
         for tz in ['UTC', 'Asia/Tokyo', 'US/Eastern', 'dateutil/US/Pacific']:
@@ -241,7 +261,7 @@ class TestTimestamp(tm.TestCase):
                 localized = ts.tz_localize(tz)
                 self.assertEqual(localized, Timestamp(t, tz=tz))
 
-                with tm.assertRaises(Exception):
+                with tm.assertRaises(TypeError):
                     localized.tz_localize(tz)
 
                 reset = localized.tz_localize(None)
